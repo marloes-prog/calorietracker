@@ -79,3 +79,6 @@ Persoonlijke calorietracker van Marloes, als PWA op haar Android-telefoon. Allee
   Niet te testen met de nepcamera van headless Chrome; alleen op de telefoon zelf.
 - Headless Chrome voor tests: gebruik een profielmap op een lang pad (niet `MARLOE~1`), anders faalt
   CacheStorage en lijkt de service worker kapot. Gooi het profiel weg tussen runs, anders test je oude JS.
+- Bestandskiezer op Android: met `accept="application/json,.json"` is een .json uit Dropbox of Downloads
+  vaak uitgegrijsd (Android kent het type niet). Het weekmenu-veld heeft daarom geen `accept`; de app
+  controleert de inhoud zelf. Het back-upveld heeft het nog wel (2026-09-28).
