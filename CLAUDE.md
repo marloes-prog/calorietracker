@@ -25,6 +25,11 @@ Persoonlijke calorietracker van Marloes, als PWA op haar Android-telefoon. Allee
   [gram/ml/stuk]"; intern wordt omgerekend naar per 100 (`f.ref` onthoudt wat ze invulde). Eenheid "stuk"
   (gekookt ei = 70 kcal) bewaart waarden per 100 stuks, zodat alle sommen gelijk blijven.
 - Bij elk product kan ze in het portiescherm zelf een eenheid toevoegen ("stuk (120 g)").
+- Een bewaarde hoeveelheid (`food.last`, of een dagboekregel) wordt alleen hergebruikt als die nog past bij
+  de eenheid van het product (`fits()`). Anders werd na omzetten van gram naar stuk "2 × snee (35 g)" 70 stuks
+  (tijgerbrood 6300 kcal, 2026-09-28).
+- Het veld "Per" in het productformulier zegt waarvoor de waarden gelden, niet hoeveel ze eet. Marloes las
+  het eerst als hoeveelheid; de zin eronder ("70 kcal per 1 stuk. Hoeveel je eet, kies je daarna.") is daarvoor.
 
 ## Bij een wijziging
 

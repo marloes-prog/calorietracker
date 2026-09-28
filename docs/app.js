@@ -380,9 +380,17 @@ function companionsOf(foodId) {
   }
   return topCounts(counts, 5);
 }
-// De portie die je de vorige keer nam, anders één portie of 100 gram.
+// Past een eerder bewaarde hoeveelheid nog bij dit product? Na omzetten van gram naar stuk niet meer:
+// dan zou "2 × snee (35 g)" ineens 70 stuks worden.
+function fits(food, p) {
+  if (!p) return false;
+  if (p.unit && p.unit !== food.unit) return false;
+  if (!p.serving) return true;
+  return food.unit !== 'stuk' && (food.servings || []).some(s => s.label === p.serving.label && s.g === p.serving.g);
+}
+// De portie die je de vorige keer nam, anders één portie of 100 gram (of 1 stuk).
 function defaultPortion(food) {
-  if (food.last) return food.last;
+  if (fits(food, food.last)) return food.last;
   const s = (food.servings || [])[0];
   return s ? { qty: 1, serving: s } : { qty: baseQty(food.unit), serving: null };
 }
@@ -522,7 +530,7 @@ function openPortion({ food, meal, entry }) {
   }
   const pick = !entry && picking;
   const servs = [...(food.servings || [])];
-  const start = entry || defaultPortion(food);
+  const start = entry && fits(food, entry) ? entry : defaultPortion(food);
   let sIdx = -1;
   const qty = start.qty;
   if (start.serving) {
@@ -635,7 +643,7 @@ function openPortion({ food, meal, entry }) {
       const item = { foodId: food.id, name: food.name, brand: food.brand || '', unit: food.unit, n: { ...food.n }, qty: q, serving };
       return closeLayers(layers.length - p.base, () => p.cb(item));
     }
-    S.foods[food.id] = { ...food, used: Date.now(), last: { qty: q, serving } };
+    S.foods[food.id] = { ...food, used: Date.now(), last: { qty: q, serving, unit: food.unit } };
     const data = { meal: curMeal, foodId: food.id, name: food.name, brand: food.brand || '', unit: food.unit, n: { ...food.n }, qty: q, serving };
     if (entry) Object.assign(entry, data);
     else {
@@ -912,12 +920,12 @@ function openFoodForm({ food, meal, entry, code, scan, note, back = 1 } = {}) {
       <label class="field">Barcode (optioneel)<input id="code" value="${esc(f.code || '')}" inputmode="numeric" autocomplete="off"></label>
     </div>
     <div class="form-card">
-      <h3>Voedingswaarden per</h3>
+      <h3>Waarvoor gelden de waarden hieronder?</h3>
       <div class="grid2">
-        <label class="field">Hoeveelheid<input id="ref" type="text" inputmode="decimal" value="${fmtIn(ref0)}" autocomplete="off"></label>
+        <label class="field">Per<input id="ref" type="text" inputmode="decimal" value="${fmtIn(ref0)}" autocomplete="off"></label>
         <label class="field">Eenheid<select id="unit"><option value="g">gram</option><option value="ml">milliliter</option><option value="stuk">stuk</option></select></label>
       </div>
-      <p class="muted" style="font-size:13px;margin-top:8px">Staat er op de verpakking bijvoorbeeld "per 30 g" of "per 2 stuks"? Vul dat hier in, dan reken ik de rest uit.</p>
+      <p class="muted" id="refsum" style="font-size:13px;margin-top:8px"></p>
       <div class="grid2">${NUTS.map(x => `<label class="field${x.sub ? ' sub' : ''}">${x.label}
         <div class="unit"><input id="n-${x.k}" type="text" inputmode="decimal" value="${val(x.k)}" autocomplete="off"><em>${x.k === 'kcal' ? 'kcal' : 'g'}</em></div></label>`).join('')}</div>
       <p class="muted" style="font-size:13px;margin-top:10px">Laat je calorieën leeg, dan reken ik ze uit met koolhydraten, eiwit en vet.</p>
@@ -935,6 +943,13 @@ function openFoodForm({ food, meal, entry, code, scan, note, back = 1 } = {}) {
   const unitSel = $('#unit', el);
   unitSel.value = f.unit;
   const refIn = $('#ref', el);
+  const refSum = () => {
+    const r = num(refIn.value) || 0, u = unitSel.value;
+    const what = u === 'stuk' ? `${fmtN(r)} ${r === 1 ? 'stuk' : 'stuks'}` : `${fmtN(r)} ${u}`;
+    const kcal = num($('#n-kcal', el).value);
+    $('#refsum', el).textContent = `${kcal !== undefined ? `${fmtN(kcal)} kcal` : 'De waarden'} per ${what}. Hoeveel je eet, kies je daarna.`;
+  };
+  el.addEventListener('input', e => { if (e.target === refIn || e.target.id === 'n-kcal') refSum(); });
   let lastUnit = f.unit;
   unitSel.addEventListener('change', () => {
     el.querySelectorAll('.uu').forEach(x => { x.textContent = unitSel.value; });
@@ -943,7 +958,9 @@ function openFoodForm({ food, meal, entry, code, scan, note, back = 1 } = {}) {
     if (unitSel.value === 'stuk' && num(refIn.value) === 100) refIn.value = '1';
     if (lastUnit === 'stuk' && unitSel.value !== 'stuk' && num(refIn.value) === 1) refIn.value = '100';
     lastUnit = unitSel.value;
+    refSum();
   });
+  refSum();
   $('#photo', el).addEventListener('click', () => $('#fcam', el).click());
   $('#gallery', el).addEventListener('click', () => $('#fgal', el).click());
 
@@ -1013,6 +1030,7 @@ function openFoodForm({ food, meal, entry, code, scan, note, back = 1 } = {}) {
       servings,
       used: Date.now(),
     };
+    if (saved.unit !== f.unit) delete saved.last;
     S.foods[saved.id] = saved;
     save();
     closeLayers(back, () => openPortion(entry ? { entry } : { food: saved, meal }));
