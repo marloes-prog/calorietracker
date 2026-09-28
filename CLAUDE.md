@@ -17,6 +17,10 @@ Persoonlijke calorietracker van Marloes, als PWA op haar Android-telefoon. Allee
 - Design naar Yazio: lichte kaarten, grote kcal-ring, macrobalkjes, Nunito.
 - Etiket scannen gebeurt met gratis OCR (Tesseract.js via jsDelivr), niet met een betaalde API.
 - Dagdoel wordt berekend (Mifflin-St Jeor x activiteit + doel), met eigen doel als overschrijving.
+- "Vaak bij [maaltijd]" en "Vaak samen met" worden afgeleid uit het dagboek zelf (minstens twee keer),
+  niet apart bijgehouden. Zo werkt het meteen met oude gegevens.
+- Maaltijden (`S.recipes`): één regel in het dagboek met de ingrediënten erin. Aanpassen geldt voor die ene
+  keer; alleen met het vinkje gaat het ook in de opgeslagen maaltijd. Zo wilde Marloes het.
 
 ## Bij een wijziging
 
@@ -32,4 +36,5 @@ Persoonlijke calorietracker van Marloes, als PWA op haar Android-telefoon. Allee
 - Product op barcode (`/api/v2/product/<code>.json`) is ruimer begrensd; onbekend geeft 404 met JSON.
 - OCR leest "g" vaak als "9" en mist komma's. `correct()` in `scan.js` kiest per waarde de lezing die
   klopt met de kcal en met verzadigd <= vet en suikers <= koolhydraten.
+- Invoervelden altijd met `fmtIn()` vullen, niet met `fmtN()`: "2.000" (nl-NL) leest `num()` terug als 2.
 - Chrome op Android heeft `BarcodeDetector`; ZXing wordt alleen geladen als dat ontbreekt.

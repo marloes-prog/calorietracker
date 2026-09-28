@@ -9,6 +9,8 @@ const $ = (s, r = document) => r.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const r0 = n => Math.round(n || 0);
 const fmtN = n => (Math.round((n || 0) * 10) / 10).toLocaleString('nl-NL');
+// Voor invoervelden: zonder duizendtal-punt, want "2.000" leest num() terug als 2.
+const fmtIn = n => String(Math.round((n || 0) * 10) / 10).replace('.', ',');
 const num = v => { const n = parseFloat(String(v ?? '').replace(',', '.')); return Number.isFinite(n) ? n : undefined; };
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 const norm = s => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
@@ -25,6 +27,8 @@ const ICON = {
   flash: '<path d="M13 2L4 14h7l-1 8 9-12h-7l1-8z"/>',
   search: '<circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/>',
   image: '<rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="2"/><path d="M21 16l-5-5-9 9"/>',
+  bowl: '<path d="M3 11h18a9 9 0 0 1-18 0z"/><path d="M8 7c0-1.5 1-2 1-3.5M12 7c0-1.5 1-2 1-3.5M16 7c0-1.5 1-2 1-3.5"/>',
+  check: '<path d="M5 12l5 5 9-10"/>',
 };
 const ic = name => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICON[name]}</svg>`;
 
@@ -62,6 +66,7 @@ function load() {
   return { profile: null, foods: {}, diary: {} };
 }
 let S = load();
+S.recipes ||= {};
 function save() {
   try { localStorage.setItem(KEY, JSON.stringify(S)); }
   catch { toast('Opslaan mislukt. Is het geheugen vol?'); }
@@ -132,6 +137,10 @@ const thumb = f => f.img
   ? `<img class="thumb" src="${esc(f.img)}" alt="" loading="lazy" referrerpolicy="no-referrer">`
   : '<div class="thumb">🍽️</div>';
 function amountLabel(e) {
+  if (e.recipe) {
+    const { eaten, portions } = e.recipe;
+    return `${fmtN(eaten)} ${eaten === 1 ? 'portie' : 'porties'}${portions !== 1 ? ` van ${fmtN(portions)}` : ''}`;
+  }
   return e.serving
     ? `${fmtN(e.qty)} × ${e.serving.label} (${fmtN(grams(e))} ${e.unit})`
     : `${fmtN(e.qty)} ${e.unit}`;
@@ -215,7 +224,8 @@ $('#app').addEventListener('click', e => {
   if (a.dataset.add) return openAdd(a.dataset.add);
   if (a.dataset.entry) {
     const entry = (S.diary[cur] || []).find(x => x.id === a.dataset.entry);
-    if (entry) openPortion({ entry });
+    if (entry?.recipe) openRecipe({ entry });
+    else if (entry) openPortion({ entry });
     return;
   }
   const act = a.dataset.act;
@@ -329,7 +339,58 @@ async function fetchJson(url, tries = 3) {
 const found = new Map(); // zoekresultaten die nog niet in je eigen lijst staan
 const getFood = id => S.foods[id] || found.get(id);
 
+// ---------- Leren uit je dagboek ----------
+// Per dag en maaltijd de set producten die je at, bijvoorbeeld {meal:'breakfast', ids:[brood, halvarine]}.
+function mealGroups() {
+  const groups = [];
+  for (const es of Object.values(S.diary)) {
+    const by = {};
+    for (const e of es) if (e.foodId && !e.recipe) (by[e.meal] ||= new Set()).add(e.foodId);
+    for (const [meal, ids] of Object.entries(by)) groups.push({ meal, ids });
+  }
+  return groups;
+}
+const usable = id => S.foods[id] && hasNutr(S.foods[id]);
+function topCounts(counts, max) {
+  return Object.entries(counts)
+    .filter(([id, n]) => n >= 2 && usable(id))
+    .sort((a, b) => b[1] - a[1] || (S.foods[b[0]].used || 0) - (S.foods[a[0]].used || 0))
+    .slice(0, max)
+    .map(([id]) => S.foods[id]);
+}
+// Wat je het vaakst bij deze maaltijd eet (minstens twee keer).
+function frequentFor(meal) {
+  const counts = {};
+  for (const g of mealGroups()) if (g.meal === meal) for (const id of g.ids) counts[id] = (counts[id] || 0) + 1;
+  return topCounts(counts, 8);
+}
+// Wat je meestal in dezelfde maaltijd samen met dit product eet (minstens twee keer).
+function companionsOf(foodId) {
+  const counts = {};
+  for (const g of mealGroups()) {
+    if (!g.ids.has(foodId)) continue;
+    for (const id of g.ids) if (id !== foodId) counts[id] = (counts[id] || 0) + 1;
+  }
+  return topCounts(counts, 5);
+}
+// De portie die je de vorige keer nam, anders één portie of 100 gram.
+function defaultPortion(food) {
+  if (food.last) return food.last;
+  const s = (food.servings || [])[0];
+  return s ? { qty: 1, serving: s } : { qty: 100, serving: null };
+}
+function portionText(food, p = defaultPortion(food)) {
+  return p.serving ? `${fmtN(p.qty)} × ${p.serving.label}` : `${fmtN(p.qty)} ${food.unit}`;
+}
+function makeEntry(food, meal, qty, serving) {
+  return { id: uid(), t: Date.now(), meal, foodId: food.id, name: food.name, brand: food.brand || '', unit: food.unit, n: { ...food.n }, qty, serving };
+}
+
 // ---------- Eten toevoegen ----------
+// Tijdens het samenstellen van een maaltijd kies je ingrediënten via hetzelfde toevoegscherm.
+// `picking` onthoudt dan waar het gekozen ingrediënt heen moet.
+let picking = null;
+
 function itemHtml(f) {
   const info = hasNutr(f) ? `${r0(f.n.kcal)} kcal per 100 ${f.unit}` : 'voedingswaarden ontbreken';
   return `<div class="item" data-food="${esc(f.id)}">${thumb(f)}
@@ -337,28 +398,47 @@ function itemHtml(f) {
     <span class="plus">${ic('plus')}</span></div>`;
 }
 
-function openAdd(meal) {
-  const el = screen(`${mealName(meal)} toevoegen`, `
+function recipeItemHtml(r) {
+  const { t } = recipeTotals(r.items);
+  return `<div class="item" data-recipe="${esc(r.id)}"><div class="thumb">🥘</div>
+    <div class="t"><b>${esc(r.name)}</b><small>${r.items.length} ingrediënten · ${r0(t.kcal / r.portions)} kcal per portie</small></div>
+    <span class="plus">${ic('plus')}</span></div>`;
+}
+
+// `pick`: callback als je een ingrediënt voor een maaltijd kiest in plaats van iets te eten.
+function openAdd(meal, pick = null) {
+  const el = screen(pick ? 'Ingrediënt kiezen' : `${mealName(meal)} toevoegen`, `
     <form class="search" id="sf"><input id="q" type="search" placeholder="Zoek een product" enterkeyhint="search" autocomplete="off">
       <button class="icon-btn" aria-label="Zoeken">${ic('search')}</button></form>
-    <div class="tiles">
+    <div class="tiles${pick ? '' : ' four'}">
       <button class="tile" data-t="barcode"><span class="ic">${ic('barcode')}</span>Barcode scannen</button>
       <button class="tile" data-t="label"><span class="ic">${ic('camera')}</span>Etiket scannen</button>
       <button class="tile" data-t="manual"><span class="ic">${ic('pencil')}</span>Zelf invoeren</button>
+      ${pick ? '' : `<button class="tile" data-t="recipe"><span class="ic">${ic('bowl')}</span>Maaltijd maken</button>`}
     </div>
     <div id="local"></div><div id="off"></div>`);
   const q = $('#q', el);
+  const section = (title, html) => `<div class="section-title">${title}</div><div class="list">${html}</div>`;
   const showLocal = () => {
     const term = norm(q.value.trim());
+    const match = s => !term || norm(s).includes(term);
+    const recipes = pick ? [] : Object.values(S.recipes)
+      .filter(r => match(r.name))
+      .sort((a, b) => (b.used || 0) - (a.used || 0));
+    const often = term || pick ? [] : frequentFor(meal);
     const foods = Object.values(S.foods)
-      .filter(f => !term || norm(`${f.name} ${f.brand || ''}`).includes(term))
+      .filter(f => !often.includes(f) && match(`${f.name} ${f.brand || ''}`))
       .sort((a, b) => (b.used || 0) - (a.used || 0))
       .slice(0, 30);
-    $('#local', el).innerHTML = `<div class="section-title">${term ? 'Mijn producten' : 'Recent'}</div>
-      <div class="list">${foods.length ? foods.map(itemHtml).join('') : `<div class="empty">${term
-        ? 'Niet in je eigen lijst. Druk op zoeken om Open Food Facts te doorzoeken.'
-        : 'Nog niets toegevoegd. Zoek een product of scan een barcode.'}</div>`}</div>`;
+    let html = '';
+    if (recipes.length) html += section('Mijn maaltijden', recipes.map(recipeItemHtml).join(''));
+    if (often.length) html += section(`Vaak bij ${mealName(meal).toLowerCase()}`, often.map(itemHtml).join(''));
+    html += section(term ? 'Mijn producten' : 'Recent', foods.length ? foods.map(itemHtml).join('') : `<div class="empty">${term
+      ? 'Niet in je eigen lijst. Druk op zoeken om Open Food Facts te doorzoeken.'
+      : 'Nog niets toegevoegd. Zoek een product of scan een barcode.'}</div>`);
+    $('#local', el).innerHTML = html;
   };
+  el._refresh = showLocal;
   q.addEventListener('input', () => { showLocal(); $('#off', el).innerHTML = ''; });
   $('#sf', el).addEventListener('submit', e => {
     e.preventDefault();
@@ -367,6 +447,8 @@ function openAdd(meal) {
     searchOFF(q.value, $('#off', el));
   });
   el.addEventListener('click', e => {
+    const rec = e.target.closest('[data-recipe]');
+    if (rec) return openRecipe({ recipe: S.recipes[rec.dataset.recipe], meal });
     const item = e.target.closest('[data-food]');
     if (item) {
       const food = getFood(item.dataset.food);
@@ -380,9 +462,11 @@ function openAdd(meal) {
     if (tile.dataset.t === 'barcode') openScanner(meal);
     if (tile.dataset.t === 'label') openFoodForm({ meal, scan: true });
     if (tile.dataset.t === 'manual') openFoodForm({ meal });
+    if (tile.dataset.t === 'recipe') openRecipe({ meal });
   });
   showLocal();
-  openLayer(el);
+  if (pick) picking = { cb: pick, base: layers.length, el };
+  openLayer(el, () => { if (picking?.el === el) picking = null; });
 }
 
 async function searchOFF(term, box) {
@@ -429,33 +513,37 @@ function openPortion({ food, meal, entry }) {
     };
     meal = entry.meal;
   }
+  const pick = !entry && picking;
   const servs = [...(food.servings || [])];
-  const start = entry || food.last;
-  let sIdx = -1, qty = 100;
-  if (start) {
-    qty = start.qty;
-    if (start.serving) {
-      sIdx = servs.findIndex(s => s.label === start.serving.label && s.g === start.serving.g);
-      if (sIdx < 0) { servs.push(start.serving); sIdx = servs.length - 1; }
-    }
-  } else if (servs.length) { sIdx = 0; qty = 1; }
+  const start = entry || defaultPortion(food);
+  let sIdx = -1;
+  const qty = start.qty;
+  if (start.serving) {
+    sIdx = servs.findIndex(s => s.label === start.serving.label && s.g === start.serving.g);
+    if (sIdx < 0) { servs.push(start.serving); sIdx = servs.length - 1; }
+  }
   let curMeal = meal;
+  const comps = entry || pick ? [] : companionsOf(food.id);
+  const chosen = new Set();
 
   const el = sheet(`
     <div class="prod-head">${thumb(food)}<div class="t"><h2>${esc(food.name)}</h2><small>${esc(food.brand || '')}</small></div></div>
     <div class="amount">
-      <label class="field">Hoeveelheid<input id="qty" type="text" inputmode="decimal" value="${fmtN(qty)}" autocomplete="off"></label>
+      <label class="field">Hoeveelheid<input id="qty" type="text" inputmode="decimal" value="${fmtIn(qty)}" autocomplete="off"></label>
       <label class="field">Eenheid<select id="unit">
         <option value="-1">${food.unit === 'ml' ? 'milliliter' : 'gram'}</option>
-        ${servs.map((s, i) => `<option value="${i}">${esc(s.label)} (${fmtN(s.g)} ${food.unit})</option>`).join('')}
+        ${servs.map((s, i) => `<option value="${i}">${esc(s.label)} (${fmtIn(s.g)} ${food.unit})</option>`).join('')}
       </select></label>
     </div>
-    <div class="seg" id="meal">${MEALS.map(m => `<button type="button" data-m="${m.id}" class="${m.id === curMeal ? 'on' : ''}">${m.short}</button>`).join('')}</div>
+    ${pick ? '' : `<div class="seg" id="meal">${MEALS.map(m => `<button type="button" data-m="${m.id}" class="${m.id === curMeal ? 'on' : ''}">${m.short}</button>`).join('')}</div>`}
     <div class="result" id="result"></div>
+    ${comps.length ? `<div class="combo"><h3>Vaak samen met ${esc(food.name)}</h3>
+      <div class="chips">${comps.map(f => `<button type="button" class="chip" data-c="${esc(f.id)}"><span class="ci">${ic('plus')}</span>
+        <span>${esc(f.name)}<small>${esc(portionText(f))} · ${r0(nutrOf(f.n, grams(defaultPortion(f))).kcal)} kcal</small></span></button>`).join('')}</div></div>` : ''}
     <details class="nutr"><summary>Voedingswaarden per 100 ${food.unit}</summary>
       <table class="ntable">${NUTS.map(x => `<tr class="${x.sub ? 'sub' : ''}"><td>${x.label}</td><td class="num">${food.n[x.k] === undefined || food.n[x.k] === null ? '–' : fmtN(food.n[x.k]) + ' ' + x.unit}</td></tr>`).join('')}</table>
     </details>
-    <button class="btn" id="save">${entry ? 'Opslaan' : 'Toevoegen'}</button>
+    <button class="btn" id="save">${entry ? 'Opslaan' : pick ? 'Toevoegen aan maaltijd' : 'Toevoegen'}</button>
     ${entry ? '<button class="btn danger" id="del">Verwijderen</button>' : ''}
     <div style="text-align:center;margin-top:10px"><button class="link" id="edit">Product bewerken</button></div>`);
 
@@ -464,8 +552,13 @@ function openPortion({ food, meal, entry }) {
   const gramsNow = () => (num(qtyIn.value) || 0) * (sIdx >= 0 ? servs[sIdx].g : 1);
   const update = () => {
     const v = nutrOf(food.n, gramsNow());
+    for (const id of chosen) {
+      const f = S.foods[id];
+      const extra = nutrOf(f.n, grams(defaultPortion(f)));
+      for (const k of NKEYS) v[k] += extra[k];
+    }
     $('#result', el).innerHTML = `${donut(v)}<div class="rows">${MACROS.map(m => `<div><i class="dot" style="background:${m.c}"></i><span>${m.l}</span><b class="num">${fmtN(v[m.k])} g</b></div>`).join('')}
-      <div><small>${fmtN(gramsNow())} ${food.unit} totaal</small></div></div>`;
+      <div><small>${chosen.size ? `inclusief ${chosen.size} extra` : `${fmtN(gramsNow())} ${food.unit} totaal`}</small></div></div>`;
   };
   qtyIn.addEventListener('input', update);
   qtyIn.addEventListener('focus', () => qtyIn.select());
@@ -473,26 +566,53 @@ function openPortion({ food, meal, entry }) {
     const g = gramsNow();
     sIdx = +unitSel.value;
     const q = sIdx >= 0 ? g / servs[sIdx].g : g;
-    qtyIn.value = fmtN(q > 0 ? q : (sIdx >= 0 ? 1 : 100));
+    qtyIn.value = fmtIn(q > 0 ? q : (sIdx >= 0 ? 1 : 100));
     update();
   });
-  $('#meal', el).addEventListener('click', e => {
+  $('#meal', el)?.addEventListener('click', e => {
     const b = e.target.closest('[data-m]');
     if (!b) return;
     curMeal = b.dataset.m;
     el.querySelectorAll('#meal button').forEach(x => x.classList.toggle('on', x === b));
   });
+  el.querySelector('.chips')?.addEventListener('click', e => {
+    const c = e.target.closest('[data-c]');
+    if (!c) return;
+    const on = !chosen.has(c.dataset.c);
+    if (on) chosen.add(c.dataset.c); else chosen.delete(c.dataset.c);
+    c.classList.toggle('on', on);
+    $('.ci', c).innerHTML = ic(on ? 'check' : 'plus');
+    update();
+  });
   $('#save', el).addEventListener('click', () => {
     const q = num(qtyIn.value);
     if (!(q > 0)) return toast('Vul een hoeveelheid in');
     const serving = sIdx >= 0 ? { ...servs[sIdx] } : null;
+    if (pick) {
+      // Ingrediënt voor een maaltijd: niets in het dagboek, terug naar het maaltijdscherm.
+      S.foods[food.id] = { ...food, used: Date.now() };
+      save();
+      const p = picking;
+      const item = { foodId: food.id, name: food.name, brand: food.brand || '', unit: food.unit, n: { ...food.n }, qty: q, serving };
+      return closeLayers(layers.length - p.base, () => p.cb(item));
+    }
     S.foods[food.id] = { ...food, used: Date.now(), last: { qty: q, serving } };
     const data = { meal: curMeal, foodId: food.id, name: food.name, brand: food.brand || '', unit: food.unit, n: { ...food.n }, qty: q, serving };
     if (entry) Object.assign(entry, data);
-    else (S.diary[cur] ||= []).push({ id: uid(), t: Date.now(), ...data });
+    else {
+      const day = (S.diary[cur] ||= []);
+      day.push({ id: uid(), t: Date.now(), ...data });
+      for (const id of chosen) {
+        const f = S.foods[id];
+        const p = defaultPortion(f);
+        day.push(makeEntry(f, curMeal, p.qty, p.serving));
+        S.foods[id] = { ...f, used: Date.now() };
+      }
+    }
     save();
     persistOnce();
-    closeAll(() => toast(entry ? 'Opgeslagen' : `Toegevoegd aan ${mealName(curMeal)}`));
+    const n = chosen.size + 1;
+    closeAll(() => toast(entry ? 'Opgeslagen' : `${n > 1 ? `${n} producten t` : 'T'}oegevoegd aan ${mealName(curMeal)}`));
   });
   $('#del', el)?.addEventListener('click', () => {
     S.diary[cur] = (S.diary[cur] || []).filter(x => x !== entry);
@@ -505,11 +625,173 @@ function openPortion({ food, meal, entry }) {
   openLayer(el);
 }
 
+// ---------- Maaltijden (recepten) ----------
+function recipeTotals(items) {
+  let g = 0;
+  const t = Object.fromEntries(NKEYS.map(k => [k, 0]));
+  for (const it of items) {
+    const gi = grams(it);
+    g += gi;
+    const v = nutrOf(it.n, gi);
+    for (const k of NKEYS) t[k] += v[k];
+  }
+  return { g, t };
+}
+function servsFor(it) {
+  const list = [...(S.foods[it.foodId]?.servings || [])];
+  if (it.serving && !list.some(s => s.label === it.serving.label && s.g === it.serving.g)) list.push(it.serving);
+  return list;
+}
+
+// Een maaltijd staat als één regel in het dagboek, met de ingrediënten erin bewaard.
+// Aanpassen geldt voor die ene keer, tenzij je "ook in de opgeslagen maaltijd bewaren" aanvinkt.
+function openRecipe({ recipe, meal, entry }) {
+  const tpl = entry ? S.recipes[entry.recipeId] : recipe;
+  const src = entry ? { name: entry.name, ...entry.recipe } : recipe || { name: '', portions: 1, items: [] };
+  const items = structuredClone(src.items);
+  let curMeal = entry ? entry.meal : meal;
+  const btnText = () => (entry ? 'Opslaan' : `Toevoegen aan ${mealName(curMeal)}`);
+  const el = screen(entry ? 'Maaltijd bewerken' : tpl ? src.name : 'Nieuwe maaltijd', `
+    <div class="form-card">
+      <label class="field">Naam<input id="rname" value="${esc(src.name)}" placeholder="bijv. Broccolitaart" autocomplete="off"></label>
+      <div class="grid2">
+        <label class="field">Recept is voor<div class="unit"><input id="rport" type="text" inputmode="decimal" value="${fmtIn(src.portions)}" autocomplete="off"><em>porties</em></div></label>
+        <label class="field">Jij eet<div class="unit"><input id="reat" type="text" inputmode="decimal" value="${fmtIn(src.eaten ?? 1)}" autocomplete="off"><em>portie</em></div></label>
+      </div>
+    </div>
+    <div class="section-title">Ingrediënten voor het hele recept</div>
+    <div class="list" id="ing"></div>
+    <button class="btn ghost" id="addi" type="button">${ic('plus')} Ingrediënt toevoegen</button>
+    <div class="seg" id="meal">${MEALS.map(m => `<button type="button" data-m="${m.id}" class="${m.id === curMeal ? 'on' : ''}">${m.short}</button>`).join('')}</div>
+    <div class="result" id="result"></div>
+    ${tpl ? '<label class="check"><input type="checkbox" id="keep"> Wijzigingen ook in de opgeslagen maaltijd bewaren</label>' : ''}
+    <button class="btn" id="save" type="button">${btnText()}</button>
+    ${entry ? '<button class="btn danger" id="del" type="button">Verwijderen uit dagboek</button>'
+      : `<button class="btn ghost" id="only" type="button">${tpl ? 'Alleen de maaltijd bijwerken' : 'Bewaren zonder toe te voegen'}</button>`}
+    ${tpl && !entry ? '<div style="text-align:center;margin-top:12px"><button class="link" id="rdel" type="button">Maaltijd verwijderen uit je lijst</button></div>' : ''}`);
+
+  const ing = $('#ing', el);
+  const renderIng = () => {
+    ing.innerHTML = items.length ? items.map((it, i) => {
+      const sv = servsFor(it);
+      const si = it.serving ? sv.findIndex(s => s.label === it.serving.label && s.g === it.serving.g) : -1;
+      return `<div class="ing" data-i="${i}">
+        <div class="ing-top"><b>${esc(it.name)}</b><span class="k num">${r0(nutrOf(it.n, grams(it)).kcal)} kcal</span>
+          <button class="x" type="button" data-rm aria-label="${esc(it.name)} weghalen">${ic('close')}</button></div>
+        <div class="ing-amt"><input type="text" inputmode="decimal" value="${fmtIn(it.qty)}" data-q autocomplete="off">
+          <select data-u><option value="-1"${si < 0 ? ' selected' : ''}>${it.unit === 'ml' ? 'milliliter' : 'gram'}</option>
+          ${sv.map((s, j) => `<option value="${j}"${j === si ? ' selected' : ''}>${esc(s.label)} (${fmtIn(s.g)} ${it.unit})</option>`).join('')}</select></div></div>`;
+    }).join('') : '<div class="empty">Nog geen ingrediënten. Voeg toe wat er in het hele gerecht gaat.</div>';
+  };
+  const readNums = () => ({ portions: num($('#rport', el).value) || 0, eaten: num($('#reat', el).value) || 0 });
+  const update = () => {
+    const { portions, eaten } = readNums();
+    const { g, t } = recipeTotals(items);
+    const share = portions > 0 ? eaten / portions : 0;
+    const v = Object.fromEntries(NKEYS.map(k => [k, t[k] * share]));
+    $('#result', el).innerHTML = `${donut(v)}<div class="rows">${MACROS.map(m => `<div><i class="dot" style="background:${m.c}"></i><span>${m.l}</span><b class="num">${fmtN(v[m.k])} g</b></div>`).join('')}
+      <div><small>Jouw deel. Hele recept: ${r0(t.kcal)} kcal, ${fmtN(g)} g</small></div></div>`;
+  };
+  ing.addEventListener('input', e => {
+    if (!e.target.matches('[data-q]')) return;
+    const row = e.target.closest('[data-i]');
+    const it = items[+row.dataset.i];
+    it.qty = num(e.target.value) || 0;
+    $('.k', row).textContent = `${r0(nutrOf(it.n, grams(it)).kcal)} kcal`;
+    update();
+  });
+  ing.addEventListener('change', e => {
+    if (!e.target.matches('[data-u]')) return;
+    const it = items[+e.target.closest('[data-i]').dataset.i];
+    const g = grams(it), sv = servsFor(it), j = +e.target.value;
+    it.serving = j >= 0 ? { ...sv[j] } : null;
+    const q = j >= 0 ? g / sv[j].g : g;
+    it.qty = Math.round((q > 0 ? q : (j >= 0 ? 1 : 100)) * 10) / 10;
+    renderIng();
+    update();
+  });
+  ing.addEventListener('click', e => {
+    if (!e.target.closest('[data-rm]')) return;
+    items.splice(+e.target.closest('[data-i]').dataset.i, 1);
+    renderIng();
+    update();
+  });
+  $('#rport', el).addEventListener('input', update);
+  $('#reat', el).addEventListener('input', update);
+  $('#addi', el).addEventListener('click', () => openAdd(curMeal, item => { items.push(item); renderIng(); update(); }));
+  $('#meal', el).addEventListener('click', e => {
+    const b = e.target.closest('[data-m]');
+    if (!b) return;
+    curMeal = b.dataset.m;
+    el.querySelectorAll('#meal button').forEach(x => x.classList.toggle('on', x === b));
+    $('#save', el).textContent = btnText();
+  });
+
+  const collect = () => {
+    const name = $('#rname', el).value.trim();
+    const { portions, eaten } = readNums();
+    const { g, t } = recipeTotals(items);
+    if (!name) return toast('Geef de maaltijd een naam');
+    if (!items.length) return toast('Voeg minstens één ingrediënt toe');
+    if (!(portions > 0)) return toast('Vul in voor hoeveel porties het recept is');
+    if (!(g > 0)) return toast('Vul de hoeveelheden van de ingrediënten in');
+    return { name, portions, eaten, g, t };
+  };
+  const saveTemplate = c => {
+    const id = tpl?.id || 'r:' + uid();
+    S.recipes[id] = { id, name: c.name, portions: c.portions, items: structuredClone(items), used: Date.now() };
+    return id;
+  };
+  const backToList = msg => closeLayers(1, () => { layers[layers.length - 1]?._refresh?.(); toast(msg); });
+
+  $('#save', el).addEventListener('click', () => {
+    const c = collect();
+    if (!c) return;
+    if (!(c.eaten > 0)) return toast('Vul in hoeveel porties je eet');
+    let rid = tpl?.id || entry?.recipeId;
+    if ((!tpl && !entry) || $('#keep', el)?.checked) rid = saveTemplate(c);
+    else if (S.recipes[rid]) S.recipes[rid].used = Date.now();
+    const data = {
+      meal: curMeal, recipeId: rid, name: c.name, brand: '', unit: 'g', serving: null,
+      n: Object.fromEntries(NKEYS.map(k => [k, c.t[k] / c.g * 100])),
+      qty: c.g * c.eaten / c.portions,
+      recipe: { portions: c.portions, eaten: c.eaten, items: structuredClone(items) },
+    };
+    if (entry) Object.assign(entry, data);
+    else (S.diary[cur] ||= []).push({ id: uid(), t: Date.now(), ...data });
+    save();
+    persistOnce();
+    closeAll(() => toast(entry ? 'Opgeslagen' : `Toegevoegd aan ${mealName(curMeal)}`));
+  });
+  $('#only', el)?.addEventListener('click', () => {
+    const c = collect();
+    if (!c) return;
+    saveTemplate(c);
+    save();
+    backToList(tpl ? 'Maaltijd bijgewerkt' : 'Maaltijd bewaard');
+  });
+  $('#del', el)?.addEventListener('click', () => {
+    S.diary[cur] = (S.diary[cur] || []).filter(x => x !== entry);
+    if (!S.diary[cur].length) delete S.diary[cur];
+    save();
+    closeAll(() => toast('Verwijderd'));
+  });
+  $('#rdel', el)?.addEventListener('click', () => {
+    if (!confirm(`"${tpl.name}" verwijderen uit je maaltijden? Wat je al gegeten hebt blijft staan.`)) return;
+    delete S.recipes[tpl.id];
+    save();
+    backToList('Maaltijd verwijderd');
+  });
+  renderIng();
+  update();
+  openLayer(el);
+}
+
 // ---------- Eigen product en etiket scannen ----------
 function openFoodForm({ food, meal, entry, code, scan, note, back = 1 } = {}) {
   const f = food ? structuredClone(food) : { id: 'c:' + uid(), name: '', brand: '', code: code || '', unit: 'g', n: {}, servings: [], source: 'custom' };
   const known = !!S.foods[f.id];
-  const val = k => (f.n[k] === undefined || f.n[k] === null ? '' : fmtN(f.n[k]));
+  const val = k => (f.n[k] === undefined || f.n[k] === null ? '' : fmtIn(f.n[k]));
   const s0 = (f.servings || [])[0];
   const el = screen(food && known ? 'Product bewerken' : 'Nieuw product', `
     ${note ? `<div class="notice warn">${esc(note)}</div>` : ''}
@@ -543,7 +825,7 @@ function openFoodForm({ food, meal, entry, code, scan, note, back = 1 } = {}) {
       <h3>Portie (optioneel)</h3>
       <div class="grid2">
         <label class="field">Omschrijving<input id="sl" value="${esc(s0?.label || '')}" placeholder="bijv. plak" autocomplete="off"></label>
-        <label class="field">Gewicht<div class="unit"><input id="sg" type="text" inputmode="decimal" value="${s0 ? fmtN(s0.g) : ''}" autocomplete="off"><em class="uu">${f.unit}</em></div></label>
+        <label class="field">Gewicht<div class="unit"><input id="sg" type="text" inputmode="decimal" value="${s0 ? fmtIn(s0.g) : ''}" autocomplete="off"><em class="uu">${f.unit}</em></div></label>
       </div>
     </div>
     <button class="btn" id="save" type="button">Opslaan</button>
@@ -566,7 +848,7 @@ function openFoodForm({ food, meal, entry, code, scan, note, back = 1 } = {}) {
         $('#obar', el).style.width = p === null ? '8%' : `${Math.round(p * 100)}%`;
       });
       const keys = Object.keys(values);
-      for (const k of keys) $(`#n-${k}`, el).value = fmtN(values[k]);
+      for (const k of keys) $(`#n-${k}`, el).value = fmtIn(values[k]);
       box.innerHTML = `<img class="photo-prev" src="${url}" alt="Je foto">
         <div class="notice${keys.length ? '' : ' warn'}">${keys.length
           ? `${keys.length} waarden ingevuld. Vergelijk ze even met de foto.`
@@ -700,7 +982,7 @@ function openProfile() {
     <div class="form-card"><h3>Over jou</h3>
       ${choices('sex', [{ v: 'v', l: 'Vrouw' }, { v: 'm', l: 'Man' }], p.sex, true)}
       <div class="grid2">${numField('age', 'Leeftijd', 'jaar', p.age)}${numField('height', 'Lengte', 'cm', p.height)}</div>
-      <div class="grid2">${numField('weight', 'Gewicht', 'kg', fmtN(p.weight))}</div>
+      <div class="grid2">${numField('weight', 'Gewicht', 'kg', fmtIn(p.weight))}</div>
     </div>
     <div class="form-card"><h3>Hoe actief ben je?</h3>${choices('act', ACT, p.act)}</div>
     <div class="form-card"><h3>Wat is je doel?</h3>${choices('goal', GOALS, p.goal)}</div>

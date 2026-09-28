@@ -281,3 +281,39 @@ details.nutr summary { cursor: pointer; font-weight: 800; color: var(--muted); p
   .stat b { font-size: 17px; }
   .macros { gap: 10px; }
 }
+
+/* Vier tegels bij toevoegen */
+.tiles.four { grid-template-columns: repeat(4, 1fr); gap: 8px; }
+.tiles.four .tile { font-size: 12px; padding: 12px 4px; }
+
+/* Vaak samen met */
+.combo { margin-top: 16px; }
+.combo h3 { font-size: 14px; font-weight: 800; color: var(--muted); margin-bottom: 8px; }
+.chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.chip {
+  display: flex; align-items: center; gap: 8px; text-align: left;
+  padding: 8px 12px 8px 8px; border-radius: 14px; background: var(--card-2);
+  border: 2px solid transparent; font-weight: 800; font-size: 14px; max-width: 100%;
+}
+.chip small { display: block; font-size: 12px; }
+.chip .ci { width: 26px; height: 26px; border-radius: 50%; background: var(--primary-soft); color: var(--primary); display: grid; place-items: center; flex: none; }
+.chip .ci svg { width: 15px; height: 15px; }
+.chip.on { border-color: var(--primary); background: var(--primary-soft); }
+.chip.on .ci { background: var(--primary); color: var(--on-primary); }
+
+/* Ingrediënten van een maaltijd */
+.ing { padding: 12px 14px; border-top: 1px solid var(--line); }
+.ing:first-child { border-top: 0; }
+.ing-top { display: flex; align-items: center; gap: 10px; }
+.ing-top b { flex: 1; min-width: 0; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ing-top .k { font-weight: 800; font-size: 14px; white-space: nowrap; }
+.ing .x { width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center; color: var(--muted); background: var(--card-2); flex: none; }
+.ing .x svg { width: 15px; height: 15px; }
+.ing-amt { display: grid; grid-template-columns: 90px 1fr; gap: 8px; margin-top: 8px; }
+.ing-amt input, .ing-amt select {
+  height: 42px; border-radius: 12px; border: 0; background: var(--card-2);
+  padding: 0 12px; font-weight: 800; font-size: 15px; color: var(--text); min-width: 0; width: 100%;
+}
+.ing-amt input:focus, .ing-amt select:focus { outline: 2px solid var(--primary); }
+.check { display: flex; align-items: center; gap: 10px; margin-top: 16px; font-size: 14px; font-weight: 700; }
+.check input { width: 22px; height: 22px; accent-color: var(--primary); flex: none; }

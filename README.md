@@ -15,6 +15,7 @@ App: https://marloes-prog.github.io/calorietracker/
 
 Klaar en online: dagboek per dag, vier maaltijden, zoeken, barcodescanner, etiketscan met OCR, eigen
 producten, portiegrootte (gram of portie), macroverdeling, berekend dagdoel, back-up en terugzetten,
-offline gebruik, donkere modus.
+offline gebruik, donkere modus. Sinds 2026-09-28 ook: "Vaak bij [maaltijd]", "Vaak samen met"
+(bijv. brood met halvarine) en eigen maaltijden met ingrediënten en porties.
 
 Open: nog niet getest op Marloes' eigen telefoon.
