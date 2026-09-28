@@ -28,12 +28,17 @@ Persoonlijke calorietracker van Marloes, als PWA op haar Android-telefoon. Allee
 - Een bewaarde hoeveelheid (`food.last`, of een dagboekregel) wordt alleen hergebruikt als die nog past bij
   de eenheid van het product (`fits()`). Anders werd na omzetten van gram naar stuk "2 × snee (35 g)" 70 stuks
   (tijgerbrood 6300 kcal, 2026-09-28).
+- Een product aanpassen werkt overal door (alle dagboekregels en opgeslagen maaltijden met die `foodId`).
+  Marloes: "een bestaand product wil ik gewoon kunnen aanpassen". Bij gram naar stuk worden porties stuks
+  (2 sneetjes = 2 stuks) en een hoeveelheid in gram 1 stuk. Dagboekregels van maaltijden blijven zoals ze waren.
+- Updates: de app vraagt bij elke keer openen om een nieuwe service worker en herlaadt dan zelf. Versie staat
+  onderaan in Profiel (`APP_VERSION` in app.js, gelijk houden met `VERSION` in sw.js).
 - Het veld "Per" in het productformulier zegt waarvoor de waarden gelden, niet hoeveel ze eet. Marloes las
   het eerst als hoeveelheid; de zin eronder ("70 kcal per 1 stuk. Hoeveel je eet, kies je daarna.") is daarvoor.
 
 ## Bij een wijziging
 
-1. Verhoog `VERSION` in `docs/sw.js`, anders blijft de telefoon de oude versie tonen tot de tweede keer openen.
+1. Verhoog `VERSION` in `docs/sw.js` én `APP_VERSION` in `docs/app.js` (zelfde waarde).
 2. Lokaal testen: `python -m http.server 8765` in `docs/`, dan http://localhost:8765.
 3. Commit en push naar `main`; Pages staat binnen een minuut online.
 

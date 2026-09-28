@@ -2,6 +2,7 @@
 
 // ---------- Basis ----------
 const KEY = 'calorietracker.v1';
+const APP_VERSION = '2026-09-28-7'; // gelijk houden met VERSION in sw.js
 const OFF = 'https://world.openfoodfacts.org';
 const OFF_FIELDS = 'code,product_name,product_name_nl,brands,nutriments,serving_size,serving_quantity,image_front_small_url,quantity,product_quantity_unit';
 
@@ -280,6 +281,7 @@ window.addEventListener('popstate', e => {
     el.classList.remove('open');
     setTimeout(() => el.remove(), 260);
   }
+  if (!layers.length && reloadPending) return location.reload();
   if (!layers.length) render();
   const then = afterClose;
   afterClose = null;
@@ -1030,9 +1032,29 @@ function openFoodForm({ food, meal, entry, code, scan, note, back = 1 } = {}) {
       servings,
       used: Date.now(),
     };
-    if (saved.unit !== f.unit) delete saved.last;
+    const unitChanged = saved.unit !== f.unit;
+    if (unitChanged) delete saved.last;
     S.foods[saved.id] = saved;
+    // Een aangepast product werkt overal door: in het dagboek en in opgeslagen maaltijden.
+    let changed = 0;
+    if (known) {
+      const adapt = x => {
+        x.n = { ...saved.n };
+        x.name = saved.name;
+        x.brand = saved.brand || '';
+        if (unitChanged) {
+          const sv = (saved.servings || [])[0];
+          if (saved.unit === 'stuk') { x.qty = x.serving ? x.qty : 1; x.serving = null; } // 2 sneetjes worden 2 stuks
+          else if (f.unit === 'stuk') { if (sv) x.serving = { ...sv }; else { x.qty = 100; x.serving = null; } }
+          x.unit = saved.unit;
+        }
+        changed++;
+      };
+      for (const day of Object.values(S.diary)) for (const e of day) if (e.foodId === saved.id && !e.recipe) adapt(e);
+      for (const r of Object.values(S.recipes)) for (const it of r.items) if (it.foodId === saved.id) adapt(it);
+    }
     save();
+    if (changed) toast(`Aangepast, ook op ${changed} ${changed === 1 ? 'plek' : 'plekken'} in je dagboek of maaltijden`);
     closeLayers(back, () => openPortion(entry ? { entry } : { food: saved, meal }));
   });
   $('#del', el)?.addEventListener('click', () => {
@@ -1178,7 +1200,8 @@ function openProfile() {
       <p class="muted" style="font-size:14px;margin-top:4px">Alles staat alleen op deze telefoon. Download af en toe een back-up, bijvoorbeeld naar Google Drive.</p>
       <div class="row"><button class="btn ghost" id="exp" type="button">Downloaden</button><button class="btn ghost" id="imp" type="button">Terugzetten</button></div>
       <input type="file" id="impf" accept="application/json,.json" hidden>
-    </div>`);
+    </div>
+    <p class="hint">Versie ${APP_VERSION}</p>`);
 
   const read = () => {
     for (const k of ['age', 'height', 'weight']) p[k] = num($('#' + k, el).value);
@@ -1252,4 +1275,20 @@ function persistOnce() {
 
 // ---------- Start ----------
 render();
-if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => { });
+
+// Updates: een geïnstalleerde app blijft vaak op de achtergrond open en laadt dan niet opnieuw.
+// Daarom bij elke keer openen naar een nieuwe versie vragen, en die meteen gebruiken.
+let reloadPending = false;
+if ('serviceWorker' in navigator) {
+  const hadController = !!navigator.serviceWorker.controller;
+  navigator.serviceWorker.register('sw.js').then(reg => {
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') reg.update().catch(() => { });
+    });
+  }).catch(() => { });
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (!hadController || reloadPending) return;
+    reloadPending = true;
+    if (!layers.length) location.reload(); // anders zodra ze terug is op het dagboek
+  });
+}
