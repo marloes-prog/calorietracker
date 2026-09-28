@@ -636,7 +636,7 @@ function openScanner(meal) {
     ctl?.stop();
     navigator.vibrate?.(60);
     msg(`<span class="spinner"></span><p style="margin-top:12px">Product ${esc(code)} opzoeken…</p>`);
-    lookupCode(code, meal);
+    lookupCode(code, meal, el);
   };
   el.addEventListener('click', e => { if (e.target.closest('[data-close]')) closeLayers(); });
   $('#mf', el).addEventListener('submit', e => {
@@ -667,21 +667,23 @@ function openScanner(meal) {
   });
 }
 
-async function lookupCode(code, meal) {
+async function lookupCode(code, meal, scanner) {
+  // Alleen doorgaan als de scanner nog openstaat; anders heeft ze hem al weggeklikt.
+  const leave = then => { if (layers[layers.length - 1] === scanner) closeLayers(1, then); };
   const local = Object.values(S.foods).find(f => f.code === code);
   if (local) {
-    return closeLayers(1, () => hasNutr(local) ? openPortion({ food: local, meal }) : openFoodForm({ food: local, meal }));
+    return leave(() => hasNutr(local) ? openPortion({ food: local, meal }) : openFoodForm({ food: local, meal }));
   }
   try {
     const d = await fetchJson(`${OFF}/api/v2/product/${encodeURIComponent(code)}.json?fields=${OFF_FIELDS}`);
     if (d.status === 1 && d.product) {
       const f = fromOFF({ ...d.product, code });
-      if (hasNutr(f) && f.name) return closeLayers(1, () => openPortion({ food: f, meal }));
-      return closeLayers(1, () => openFoodForm({ food: f, meal, note: 'Dit product staat in de database, maar zonder volledige gegevens. Scan het etiket of vul de waarden zelf in.' }));
+      if (hasNutr(f) && f.name) return leave(() => openPortion({ food: f, meal }));
+      return leave(() => openFoodForm({ food: f, meal, note: 'Dit product staat in de database, maar zonder volledige gegevens. Scan het etiket of vul de waarden zelf in.' }));
     }
-    closeLayers(1, () => openFoodForm({ code, meal, note: `Barcode ${code} is onbekend. Scan het etiket of vul de waarden zelf in. De volgende keer herkent de app hem.` }));
+    leave(() => openFoodForm({ code, meal, note: `Barcode ${code} is onbekend. Scan het etiket of vul de waarden zelf in. De volgende keer herkent de app hem.` }));
   } catch {
-    closeLayers(1, () => openFoodForm({ code, meal, note: 'Opzoeken lukte niet, mogelijk geen internet. Vul de waarden zelf in of probeer het straks opnieuw.' }));
+    leave(() => openFoodForm({ code, meal, note: 'Opzoeken lukte niet, mogelijk geen internet. Vul de waarden zelf in of probeer het straks opnieuw.' }));
   }
 }
 
