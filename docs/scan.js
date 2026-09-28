@@ -60,17 +60,64 @@ const Scan = (() => {
     };
   }
 
+  // Onthouden per telefoon: welke camera en welke zoom het best werkten.
+  const CAM_KEY = 'calorietracker.camera';
+  const ZOOM_KEY = 'calorietracker.zoom';
+  const store = {
+    get: k => { try { return localStorage.getItem(k); } catch { return null; } },
+    set: (k, v) => { try { localStorage.setItem(k, v); } catch { } },
+  };
+
+  function openStream(deviceId) {
+    const video = { width: { ideal: 1920 }, height: { ideal: 1080 } };
+    if (deviceId) video.deviceId = { exact: deviceId };
+    else video.facingMode = { ideal: 'environment' };
+    return navigator.mediaDevices.getUserMedia({ audio: false, video });
+  }
+
+  // Achtercamera's. Namen zijn pas zichtbaar nadat je toestemming gaf.
+  async function backCameras() {
+    const all = (await navigator.mediaDevices.enumerateDevices()).filter(d => d.kind === 'videoinput');
+    const back = all.filter(d => /back|rear|achter|environment/i.test(d.label));
+    return back.length ? back : all;
+  }
+
   // Start de camera in `video` en roept onCode(code) aan bij de eerste geldige barcode.
+  // Telefoons met meerdere lenzen geven de browser vaak de groothoeklens, die van dichtbij niet
+  // scherp stelt. Daarom: hoofdcamera kiezen, een beetje inzoomen zodat je verder weg kunt houden,
+  // en tikken om opnieuw scherp te stellen.
   async function barcode(video, onCode) {
-    const stream = await navigator.mediaDevices.getUserMedia({
-      audio: false,
-      video: { facingMode: { ideal: 'environment' }, width: { ideal: 1920 }, height: { ideal: 1080 } },
-    });
-    video.srcObject = stream;
-    await video.play();
-    const track = stream.getVideoTracks()[0];
-    // Autofocus waar de camera dat kan.
-    try { await track.applyConstraints({ advanced: [{ focusMode: 'continuous' }] }); } catch { }
+    const saved = store.get(CAM_KEY);
+    let stream;
+    try { stream = await openStream(saved); } catch { stream = await openStream(null); }
+    let cams = [];
+    try { cams = await backCameras(); } catch { }
+    const currentId = () => stream.getVideoTracks()[0].getSettings().deviceId;
+    // Eerste keer: op Android heet de hoofdcamera meestal "camera2 0, facing back".
+    if (!saved && cams.length > 1) {
+      const main = cams.find(c => /\b0\b/.test(c.label)) || cams[0];
+      if (main.deviceId && main.deviceId !== currentId()) {
+        stream.getTracks().forEach(t => t.stop());
+        try { stream = await openStream(main.deviceId); } catch { stream = await openStream(null); }
+      }
+    }
+    let track, caps;
+    let zoom = parseFloat(store.get(ZOOM_KEY)) || 2;
+    const tune = async () => {
+      track = stream.getVideoTracks()[0];
+      caps = track.getCapabilities ? track.getCapabilities() : {};
+      const adv = [];
+      if (caps.focusMode?.includes('continuous')) adv.push({ focusMode: 'continuous' });
+      if (caps.zoom) adv.push({ zoom: Math.min(caps.zoom.max, Math.max(caps.zoom.min, zoom)) });
+      for (const c of adv) { try { await track.applyConstraints({ advanced: [c] }); } catch { } }
+    };
+    const attach = async () => {
+      video.srcObject = stream;
+      await video.play();
+      await tune();
+    };
+    await attach();
+
     let alive = true;
     const stop = () => {
       alive = false;
@@ -84,65 +131,149 @@ const Scan = (() => {
           const code = await detect();
           if (alive && code && validCode(code)) { stop(); onCode(code); return; }
         } catch { }
-        await new Promise(r => setTimeout(r, 120));
+        await new Promise(r => setTimeout(r, 100));
       }
     })();
-    const caps = track.getCapabilities ? track.getCapabilities() : {};
-    return {
+
+    const ctl = {
       stop,
-      hasTorch: !!caps.torch,
+      get hasTorch() { return !!caps.torch; },
       torch: on => track.applyConstraints({ advanced: [{ torch: on }] }),
+      cameraCount: cams.length,
+      // Zoomstappen die deze camera aankan, bijvoorbeeld [1, 2, 3].
+      get zoomSteps() { return caps.zoom ? [1, 2, 3].filter(z => z >= caps.zoom.min && z <= caps.zoom.max) : []; },
+      get zoom() { return caps.zoom ? Math.min(caps.zoom.max, Math.max(caps.zoom.min, zoom)) : 1; },
+      async setZoom(z) {
+        zoom = z;
+        store.set(ZOOM_KEY, String(z));
+        try { await track.applyConstraints({ advanced: [{ zoom: z }] }); } catch { }
+      },
+      // Opnieuw scherpstellen: kort naar 'single-shot' en dan weer continu.
+      async focus() {
+        try {
+          if (caps.focusMode?.includes('single-shot')) {
+            await track.applyConstraints({ advanced: [{ focusMode: 'single-shot' }] });
+            setTimeout(() => { if (alive && caps.focusMode.includes('continuous')) track.applyConstraints({ advanced: [{ focusMode: 'continuous' }] }).catch(() => { }); }, 1200);
+          } else if (caps.focusMode?.includes('continuous')) {
+            await track.applyConstraints({ advanced: [{ focusMode: 'manual' }] }).catch(() => { });
+            await track.applyConstraints({ advanced: [{ focusMode: 'continuous' }] });
+          }
+        } catch { }
+      },
+      // Volgende achtercamera proberen; de keuze wordt onthouden.
+      async switchCamera() {
+        if (cams.length < 2) return;
+        const i = cams.findIndex(c => c.deviceId === currentId());
+        const next = cams[(i + 1) % cams.length];
+        stream.getTracks().forEach(t => t.stop());
+        stream = await openStream(next.deviceId);
+        store.set(CAM_KEY, next.deviceId);
+        await attach();
+        return (i + 1) % cams.length + 1;
+      },
     };
+    if (!saved) store.set(CAM_KEY, currentId() || '');
+    return ctl;
   }
 
-  // Foto verkleinen, grijs maken en contrast oprekken: dat leest Tesseract beter.
-  async function prepImage(file) {
-    const bmp = await createImageBitmap(file);
-    const scale = Math.min(1, 2000 / Math.max(bmp.width, bmp.height));
-    const w = Math.round(bmp.width * scale), h = Math.round(bmp.height * scale);
+  // Foto (of het uitgesneden stuk) naar een formaat waarop Tesseract goed leest: kleine uitsneden
+  // worden vergroot, grote foto's verkleind. `crop` is {x, y, w, h} als fractie van de foto (0..1).
+  // mode 'gray': grijs met opgerekt contrast. mode 'bw': zwart-wit met een drempel per buurt,
+  // zodat schaduw en schittering niet de hele foto zwart of wit maken.
+  function prepImage(bmp, crop, mode) {
+    const c = crop || { x: 0, y: 0, w: 1, h: 1 };
+    const sx = c.x * bmp.width, sy = c.y * bmp.height, sw = c.w * bmp.width, sh = c.h * bmp.height;
+    const scale = Math.min(3, 2200 / Math.max(sw, sh));
+    const w = Math.round(sw * scale), h = Math.round(sh * scale);
     const canvas = document.createElement('canvas');
     canvas.width = w; canvas.height = h;
     const ctx = canvas.getContext('2d', { willReadFrequently: true });
-    ctx.drawImage(bmp, 0, 0, w, h);
+    ctx.imageSmoothingQuality = 'high';
+    ctx.drawImage(bmp, sx, sy, sw, sh, 0, 0, w, h);
     const img = ctx.getImageData(0, 0, w, h);
     const px = img.data;
-    const hist = new Uint32Array(256);
-    for (let i = 0; i < px.length; i += 4) {
-      const g = Math.round(px[i] * 0.299 + px[i + 1] * 0.587 + px[i + 2] * 0.114);
-      px[i] = g; hist[g]++;
+    const gray = new Uint8ClampedArray(w * h);
+    for (let i = 0, j = 0; i < px.length; i += 4, j++) gray[j] = px[i] * 0.299 + px[i + 1] * 0.587 + px[i + 2] * 0.114;
+
+    let out;
+    if (mode === 'bw') {
+      // Bradley-drempel: een pixel is inkt als hij 15% donkerder is dan het gemiddelde om hem heen.
+      const sum = new Float64Array((w + 1) * (h + 1));
+      for (let y = 0; y < h; y++) {
+        let row = 0;
+        for (let x = 0; x < w; x++) {
+          row += gray[y * w + x];
+          sum[(y + 1) * (w + 1) + x + 1] = sum[y * (w + 1) + x + 1] + row;
+        }
+      }
+      const r = Math.max(8, Math.round(Math.max(w, h) / 40));
+      out = new Uint8ClampedArray(w * h);
+      for (let y = 0; y < h; y++) {
+        const y0 = Math.max(0, y - r), y1 = Math.min(h, y + r + 1);
+        for (let x = 0; x < w; x++) {
+          const x0 = Math.max(0, x - r), x1 = Math.min(w, x + r + 1);
+          const s = sum[y1 * (w + 1) + x1] - sum[y0 * (w + 1) + x1] - sum[y1 * (w + 1) + x0] + sum[y0 * (w + 1) + x0];
+          const mean = s / ((x1 - x0) * (y1 - y0));
+          out[y * w + x] = gray[y * w + x] < mean * 0.85 ? 0 : 255;
+        }
+      }
+    } else {
+      const hist = new Uint32Array(256);
+      for (const g of gray) hist[g]++;
+      const n = w * h;
+      let lo = 0, hi = 255, acc = 0;
+      for (let i = 0; i < 256; i++) { acc += hist[i]; if (acc > n * 0.02) { lo = i; break; } }
+      acc = 0;
+      for (let i = 255; i >= 0; i--) { acc += hist[i]; if (acc > n * 0.02) { hi = i; break; } }
+      const range = Math.max(1, hi - lo);
+      out = gray.map(g => ((g - lo) * 255) / range);
     }
-    const n = w * h;
-    let lo = 0, hi = 255, acc = 0;
-    for (let i = 0; i < 256; i++) { acc += hist[i]; if (acc > n * 0.02) { lo = i; break; } }
-    acc = 0;
-    for (let i = 255; i >= 0; i--) { acc += hist[i]; if (acc > n * 0.02) { hi = i; break; } }
-    const range = Math.max(1, hi - lo);
-    for (let i = 0; i < px.length; i += 4) {
-      const v = Math.max(0, Math.min(255, ((px[i] - lo) * 255) / range));
-      px[i] = px[i + 1] = px[i + 2] = v;
-    }
+    for (let i = 0, j = 0; i < px.length; i += 4, j++) px[i] = px[i + 1] = px[i + 2] = out[j];
     ctx.putImageData(img, 0, 0);
     return canvas;
   }
 
   // Leest de tekst van een etiketfoto. onProgress(fractie 0..1 of null, statustekst).
-  async function label(file, onProgress = () => { }) {
+  // Eerst zwart-wit als één tekstblok; vindt dat te weinig, dan nog een keer in grijs.
+  async function label(file, onProgress = () => { }, crop = null) {
     onProgress(null, 'Foto voorbereiden');
-    const canvas = await prepImage(file);
+    const bmp = await createImageBitmap(file);
     onProgress(null, 'Tekstherkenning laden');
     await loadScript(TESSERACT);
+    let pass = 1;
     const worker = await Tesseract.createWorker(['nld', 'eng'], 1, {
       logger: m => {
-        if (m.status === 'recognizing text') onProgress(m.progress, 'Tekst lezen');
+        if (m.status === 'recognizing text') onProgress(m.progress, pass === 1 ? 'Tekst lezen' : 'Nog een keer lezen, op een andere manier');
         else if (m.status && m.status.includes('loading')) onProgress(null, 'Taalbestanden laden (alleen de eerste keer)');
       },
     });
     try {
-      const { data } = await worker.recognize(canvas);
-      return { text: data.text, values: parseLabel(data.text) };
+      const attempts = [['gray', '6'], ['bw', '6'], ['gray', '4']];
+      let best = null;
+      for (const [mode, psm] of attempts) {
+        await worker.setParameters({ tessedit_pageseg_mode: psm, preserve_interword_spaces: '1' });
+        const { data } = await worker.recognize(prepImage(bmp, crop, mode));
+        const values = parseLabel(data.text);
+        const q = quality(values);
+        if (!best || q > best.q) best = { text: data.text, values, q };
+        if (q >= 7.5) break; // vrijwel alles gevonden en de kcal klopt: klaar
+        pass++;
+      }
+      return { text: best.text, values: best.values };
     } finally {
       worker.terminate();
     }
+  }
+
+  // Hoe geloofwaardig een uitkomst is: aantal gevonden waarden, min strafpunten als
+  // koolhydraten, eiwit en vet niet op de kcal uitkomen.
+  function quality(v) {
+    let q = Object.keys(v).length;
+    if (v.kcal && v.carbs !== undefined && v.fat !== undefined && v.protein !== undefined) {
+      const est = 4 * v.carbs + 4 * v.protein + 9 * v.fat + 2 * (v.fiber || 0);
+      q -= Math.min(4, 10 * Math.abs(v.kcal - est) / v.kcal);
+    } else q -= 2;
+    return q;
   }
 
   function toNum(s) {
@@ -157,19 +288,23 @@ const Scan = (() => {
 
   // Wat er bedoeld kan zijn bij de bekende OCR-fouten: "g" gelezen als "9" ("12,5g" -> "12,59")
   // en een gemiste komma ("2,1" -> "21"). Elke correctie kost punten; de goedkoopste die klopt wint.
-  function candidates(t) {
+  // Behalve zout staan waarden bijna altijd met één decimaal op het etiket; een tweede decimaal
+  // zonder "g" erachter is dan meestal een verkeerd gelezen "g" ("1,9g" -> "1,94").
+  function candidates(t, key) {
     const out = [];
-    const decimals = (t.raw.split(/[.,]/)[1] || '').length;
-    const strip = !t.g && t.raw.length > 1 && t.raw.endsWith('9');
-    const base = [{ v: toNum(t.raw), cost: strip && decimals >= 2 ? 1 : 0 }];
+    // "048" is bijna altijd "0,48" met een gemiste komma.
+    const raw = /^0\d+$/.test(t.raw) ? '0,' + t.raw.slice(1) : t.raw;
+    const decimals = (raw.split(/[.,]/)[1] || '').length;
+    const strip = !t.g && raw.length > 1 && (raw.endsWith('9') || (key !== 'salt' && decimals >= 2));
+    const base = [{ v: toNum(raw), cost: strip && decimals >= 2 ? 1 : 0 }];
     if (strip) {
-      const s = t.raw.slice(0, -1).replace(/[.,]$/, '');
+      const s = raw.slice(0, -1).replace(/[.,]$/, '');
       if (s) base.push({ v: toNum(s), cost: decimals >= 2 ? 0 : 1 });
     }
     for (const c of base) {
       out.push(c);
       if (Number.isInteger(c.v) && c.v >= 10) {
-        out.push({ v: c.v / 10, cost: c.cost + 1 });
+        out.push({ v: c.v / 10, cost: c.cost + 1.2 });
         if (c.v >= 100) out.push({ v: c.v / 100, cost: c.cost + 2.5 });
       }
     }
@@ -180,7 +315,7 @@ const Scan = (() => {
   // ongeveer op de kcal uitkomen, en samen niet boven de 100 g per 100 g.
   function correct(tokens, kcal) {
     const main = ['carbs', 'fat', 'protein', 'fiber'].filter(k => tokens[k]);
-    const cand = Object.fromEntries(main.map(k => [k, candidates(tokens[k])]));
+    const cand = Object.fromEntries(main.map(k => [k, candidates(tokens[k], k)]));
     let best = null;
     const pick = {};
     (function walk(i, cost) {
@@ -188,7 +323,13 @@ const Scan = (() => {
         const v = k => pick[k]?.v || 0;
         let score = cost;
         if (v('carbs') + v('fat') + v('protein') + v('fiber') > 102) score += 100;
-        if (kcal) score += 20 * Math.abs(kcal - (4 * v('carbs') + 4 * v('protein') + 9 * v('fat') + 2 * v('fiber'))) / kcal;
+        if (kcal) {
+          const est = 4 * v('carbs') + 4 * v('protein') + 9 * v('fat') + 2 * v('fiber');
+          // Alle drie de macro's gelezen: moet kloppen. Eén kwijt: de rest mag alleen minder zijn.
+          const complete = ['carbs', 'fat', 'protein'].every(k => tokens[k]);
+          const off = complete ? Math.abs(kcal - est) : Math.max(0, est - kcal * 1.05);
+          score += 20 * off / kcal;
+        }
         if (!best || score < best.score) best = { score, pick: { ...pick } };
         return;
       }
@@ -198,10 +339,15 @@ const Scan = (() => {
     for (const k of main) out[k] = best.pick[k].v;
     const limited = (k, max) => {
       if (!tokens[k]) return;
-      const c = candidates(tokens[k]);
+      const c = candidates(tokens[k], k);
       out[k] = (c.find(x => x.v <= max + 0.05) || c[0]).v;
     };
-    limited('sat', out.fat ?? 100);
+    // Vet niet gelezen? Schat het uit de kcal, zodat "verzadigd" toch getoetst kan worden.
+    let fatMax = out.fat;
+    if (fatMax === undefined && kcal && out.carbs !== undefined && out.protein !== undefined) {
+      fatMax = Math.max(1, (kcal - 4 * out.carbs - 4 * out.protein - 2 * (out.fiber || 0)) / 9 * 1.2);
+    }
+    limited('sat', fatMax ?? 100);
     limited('sugar', out.carbs ?? 100);
     limited('salt', 30);
     return out;
@@ -211,7 +357,7 @@ const Scan = (() => {
   function parseLabel(text) {
     const out = {};
     const flat = text.replace(/\s+/g, ' ');
-    let m = flat.match(/(\d{1,4}(?:[.,]\d+)?)\s*k\s?ca[l1I]/i);
+    let m = flat.match(/(\d{1,4}(?:[.,]\d+)?)\s*k\s?[ce]a[l1Ii]/i); // ook "keal", "kcai"
     if (m) out.kcal = Math.round(toNum(m[1]));
     else {
       m = flat.match(/(\d{2,5}(?:[.,]\d+)?)\s*k\s?J/i);
@@ -226,16 +372,24 @@ const Scan = (() => {
       ['protein', /eiwit|protein/i],
       ['salt', /\bzout\b|\bsalt\b/i],
     ];
+    // Begin bij de tabel, zodat "suiker" of "zout" in de ingrediëntenlijst niet meetelt.
+    let lines = text.split(/\n/).map(l => l.trim()).filter(Boolean);
+    const startAt = lines.findIndex(l => /voedingswaarde|nutrition|energie|energy|\bk\s?J\b|kcal/i.test(l));
+    if (startAt > 0) lines = lines.slice(startAt);
+    const anyKeyword = l => rules.some(([, re]) => re.test(l));
     const tokens = {};
-    for (const line of text.split(/\n/)) {
+    lines.forEach((line, i) => {
       for (const [key, re, not] of rules) {
         if (tokens[key]) continue;
         const hit = line.match(re);
         if (!hit || (not && not.test(line))) continue;
-        const t = firstToken(line.slice(hit.index + hit[0].length));
+        let t = firstToken(line.slice(hit.index + hit[0].length));
+        // Staat het getal een regel lager (scheve foto), pak dan die regel.
+        const next = lines[i + 1];
+        if (!t && next && !anyKeyword(next)) t = firstToken(next);
         if (t && toNum(t.raw) < 10000) { tokens[key] = t; break; }
       }
-    }
+    });
     return Object.assign(out, correct(tokens, out.kcal));
   }
 

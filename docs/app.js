@@ -10,7 +10,7 @@ const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': 
 const r0 = n => Math.round(n || 0);
 const fmtN = n => (Math.round((n || 0) * 10) / 10).toLocaleString('nl-NL');
 // Voor invoervelden: zonder duizendtal-punt, want "2.000" leest num() terug als 2.
-const fmtIn = n => String(Math.round((n || 0) * 10) / 10).replace('.', ',');
+const fmtIn = n => String(Math.round((n || 0) * 100) / 100).replace('.', ',');
 const num = v => { const n = parseFloat(String(v ?? '').replace(',', '.')); return Number.isFinite(n) ? n : undefined; };
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 const norm = s => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
@@ -29,6 +29,7 @@ const ICON = {
   image: '<rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="2"/><path d="M21 16l-5-5-9 9"/>',
   bowl: '<path d="M3 11h18a9 9 0 0 1-18 0z"/><path d="M8 7c0-1.5 1-2 1-3.5M12 7c0-1.5 1-2 1-3.5M16 7c0-1.5 1-2 1-3.5"/>',
   check: '<path d="M5 12l5 5 9-10"/>',
+  swap: '<path d="M4 8h13l-3-3M20 16H7l3 3"/>',
 };
 const ic = name => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICON[name]}</svg>`;
 
@@ -133,6 +134,12 @@ function goals(p = S.profile || DEFAULT_PROFILE) {
 
 // ---------- Weergave ----------
 const hasNutr = f => f && f.n && f.n.kcal !== undefined && f.n.kcal !== null;
+const UNIT_NAME = { g: 'gram', ml: 'milliliter', stuk: 'stuk' };
+// Producten "per stuk" (gekookt ei = 70 kcal) bewaren hun waarden intern per 100 stuks,
+// zodat alle sommen hetzelfde blijven als bij gram en milliliter.
+const baseText = u => (u === 'stuk' ? 'per stuk' : `per 100 ${u}`);
+const baseQty = u => (u === 'stuk' ? 1 : 100);
+const perBase = (f, k) => (f.n[k] === undefined || f.n[k] === null ? f.n[k] : f.unit === 'stuk' ? f.n[k] / 100 : f.n[k]);
 const thumb = f => f.img
   ? `<img class="thumb" src="${esc(f.img)}" alt="" loading="lazy" referrerpolicy="no-referrer">`
   : '<div class="thumb">🍽️</div>';
@@ -377,7 +384,7 @@ function companionsOf(foodId) {
 function defaultPortion(food) {
   if (food.last) return food.last;
   const s = (food.servings || [])[0];
-  return s ? { qty: 1, serving: s } : { qty: 100, serving: null };
+  return s ? { qty: 1, serving: s } : { qty: baseQty(food.unit), serving: null };
 }
 function portionText(food, p = defaultPortion(food)) {
   return p.serving ? `${fmtN(p.qty)} × ${p.serving.label}` : `${fmtN(p.qty)} ${food.unit}`;
@@ -392,7 +399,7 @@ function makeEntry(food, meal, qty, serving) {
 let picking = null;
 
 function itemHtml(f) {
-  const info = hasNutr(f) ? `${r0(f.n.kcal)} kcal per 100 ${f.unit}` : 'voedingswaarden ontbreken';
+  const info = hasNutr(f) ? `${r0(perBase(f, 'kcal'))} kcal ${baseText(f.unit)}` : 'voedingswaarden ontbreken';
   return `<div class="item" data-food="${esc(f.id)}">${thumb(f)}
     <div class="t"><b>${esc(f.name)}</b><small>${esc([f.brand, info].filter(Boolean).join(' · '))}</small></div>
     <span class="plus">${ic('plus')}</span></div>`;
@@ -530,25 +537,36 @@ function openPortion({ food, meal, entry }) {
     <div class="prod-head">${thumb(food)}<div class="t"><h2>${esc(food.name)}</h2><small>${esc(food.brand || '')}</small></div></div>
     <div class="amount">
       <label class="field">Hoeveelheid<input id="qty" type="text" inputmode="decimal" value="${fmtIn(qty)}" autocomplete="off"></label>
-      <label class="field">Eenheid<select id="unit">
-        <option value="-1">${food.unit === 'ml' ? 'milliliter' : 'gram'}</option>
-        ${servs.map((s, i) => `<option value="${i}">${esc(s.label)} (${fmtIn(s.g)} ${food.unit})</option>`).join('')}
-      </select></label>
+      <label class="field">Eenheid<select id="unit"></select></label>
+    </div>
+    <div id="addserv" class="addserv" hidden>
+      <div class="grid2">
+        <label class="field">Naam<input id="asl" value="stuk" autocomplete="off"></label>
+        <label class="field">Weegt<div class="unit"><input id="asg" type="text" inputmode="decimal" placeholder="bijv. 55" autocomplete="off"><em>${food.unit}</em></div></label>
+      </div>
+      <button class="btn ghost" id="asok" type="button">Eenheid bewaren</button>
     </div>
     ${pick ? '' : `<div class="seg" id="meal">${MEALS.map(m => `<button type="button" data-m="${m.id}" class="${m.id === curMeal ? 'on' : ''}">${m.short}</button>`).join('')}</div>`}
     <div class="result" id="result"></div>
     ${comps.length ? `<div class="combo"><h3>Vaak samen met ${esc(food.name)}</h3>
       <div class="chips">${comps.map(f => `<button type="button" class="chip" data-c="${esc(f.id)}"><span class="ci">${ic('plus')}</span>
         <span>${esc(f.name)}<small>${esc(portionText(f))} · ${r0(nutrOf(f.n, grams(defaultPortion(f))).kcal)} kcal</small></span></button>`).join('')}</div></div>` : ''}
-    <details class="nutr"><summary>Voedingswaarden per 100 ${food.unit}</summary>
-      <table class="ntable">${NUTS.map(x => `<tr class="${x.sub ? 'sub' : ''}"><td>${x.label}</td><td class="num">${food.n[x.k] === undefined || food.n[x.k] === null ? '–' : fmtN(food.n[x.k]) + ' ' + x.unit}</td></tr>`).join('')}</table>
+    <details class="nutr"><summary>Voedingswaarden ${baseText(food.unit)}</summary>
+      <table class="ntable">${NUTS.map(x => `<tr class="${x.sub ? 'sub' : ''}"><td>${x.label}</td><td class="num">${perBase(food, x.k) === undefined || perBase(food, x.k) === null ? '–' : fmtN(perBase(food, x.k)) + ' ' + x.unit}</td></tr>`).join('')}</table>
     </details>
     <button class="btn" id="save">${entry ? 'Opslaan' : pick ? 'Toevoegen aan maaltijd' : 'Toevoegen'}</button>
     ${entry ? '<button class="btn danger" id="del">Verwijderen</button>' : ''}
     <div style="text-align:center;margin-top:10px"><button class="link" id="edit">Product bewerken</button></div>`);
 
   const qtyIn = $('#qty', el), unitSel = $('#unit', el);
-  unitSel.value = String(sIdx);
+  // Zelf een eenheid toevoegen, zoals "stuk (55 g)" bij eieren of "schep (15 g)".
+  const fillUnits = () => {
+    unitSel.innerHTML = `<option value="-1">${UNIT_NAME[food.unit]}</option>
+      ${servs.map((s, i) => `<option value="${i}">${esc(s.label)} (${fmtIn(s.g)} ${food.unit})</option>`).join('')}
+      ${food.unit === 'stuk' ? '' : '<option value="new">+ Stuk of portie toevoegen</option>'}`;
+    unitSel.value = String(sIdx);
+  };
+  fillUnits();
   const gramsNow = () => (num(qtyIn.value) || 0) * (sIdx >= 0 ? servs[sIdx].g : 1);
   const update = () => {
     const v = nutrOf(food.n, gramsNow());
@@ -563,10 +581,31 @@ function openPortion({ food, meal, entry }) {
   qtyIn.addEventListener('input', update);
   qtyIn.addEventListener('focus', () => qtyIn.select());
   unitSel.addEventListener('change', () => {
+    if (unitSel.value === 'new') {
+      unitSel.value = String(sIdx);
+      $('#addserv', el).hidden = false;
+      $('#asg', el).focus();
+      return;
+    }
     const g = gramsNow();
     sIdx = +unitSel.value;
     const q = sIdx >= 0 ? g / servs[sIdx].g : g;
-    qtyIn.value = fmtIn(q > 0 ? q : (sIdx >= 0 ? 1 : 100));
+    qtyIn.value = fmtIn(q > 0 ? q : (sIdx >= 0 ? 1 : baseQty(food.unit)));
+    update();
+  });
+  $('#asok', el).addEventListener('click', () => {
+    const label = $('#asl', el).value.trim() || 'stuk';
+    const g = num($('#asg', el).value);
+    if (!(g > 0)) return toast(`Vul in hoeveel ${food.unit} één ${label} weegt`);
+    const sv = { label, g };
+    food.servings = [...(food.servings || []), sv];
+    S.foods[food.id] = { ...(S.foods[food.id] || food), servings: food.servings };
+    save();
+    servs.push(sv);
+    sIdx = servs.length - 1;
+    qtyIn.value = '1';
+    fillUnits();
+    $('#addserv', el).hidden = true;
     update();
   });
   $('#meal', el)?.addEventListener('click', e => {
@@ -679,18 +718,18 @@ function openRecipe({ recipe, meal, entry }) {
         <div class="ing-top"><b>${esc(it.name)}</b><span class="k num">${r0(nutrOf(it.n, grams(it)).kcal)} kcal</span>
           <button class="x" type="button" data-rm aria-label="${esc(it.name)} weghalen">${ic('close')}</button></div>
         <div class="ing-amt"><input type="text" inputmode="decimal" value="${fmtIn(it.qty)}" data-q autocomplete="off">
-          <select data-u><option value="-1"${si < 0 ? ' selected' : ''}>${it.unit === 'ml' ? 'milliliter' : 'gram'}</option>
+          <select data-u><option value="-1"${si < 0 ? ' selected' : ''}>${UNIT_NAME[it.unit]}</option>
           ${sv.map((s, j) => `<option value="${j}"${j === si ? ' selected' : ''}>${esc(s.label)} (${fmtIn(s.g)} ${it.unit})</option>`).join('')}</select></div></div>`;
     }).join('') : '<div class="empty">Nog geen ingrediënten. Voeg toe wat er in het hele gerecht gaat.</div>';
   };
   const readNums = () => ({ portions: num($('#rport', el).value) || 0, eaten: num($('#reat', el).value) || 0 });
   const update = () => {
     const { portions, eaten } = readNums();
-    const { g, t } = recipeTotals(items);
+    const { t } = recipeTotals(items);
     const share = portions > 0 ? eaten / portions : 0;
     const v = Object.fromEntries(NKEYS.map(k => [k, t[k] * share]));
     $('#result', el).innerHTML = `${donut(v)}<div class="rows">${MACROS.map(m => `<div><i class="dot" style="background:${m.c}"></i><span>${m.l}</span><b class="num">${fmtN(v[m.k])} g</b></div>`).join('')}
-      <div><small>Jouw deel. Hele recept: ${r0(t.kcal)} kcal, ${fmtN(g)} g</small></div></div>`;
+      <div><small>Jouw deel. Hele recept: ${r0(t.kcal)} kcal</small></div></div>`;
   };
   ing.addEventListener('input', e => {
     if (!e.target.matches('[data-q]')) return;
@@ -706,7 +745,7 @@ function openRecipe({ recipe, meal, entry }) {
     const g = grams(it), sv = servsFor(it), j = +e.target.value;
     it.serving = j >= 0 ? { ...sv[j] } : null;
     const q = j >= 0 ? g / sv[j].g : g;
-    it.qty = Math.round((q > 0 ? q : (j >= 0 ? 1 : 100)) * 10) / 10;
+    it.qty = Math.round((q > 0 ? q : (j >= 0 ? 1 : baseQty(it.unit))) * 10) / 10;
     renderIng();
     update();
   });
@@ -787,17 +826,71 @@ function openRecipe({ recipe, meal, entry }) {
   openLayer(el);
 }
 
+// ---------- Etiketfoto uitsnijden ----------
+// Geeft {x, y, w, h} als fractie van de foto, null voor de hele foto, of undefined als ze teruggaat.
+// Alleen de tabel lezen scheelt veel: geen ingrediëntentekst of achtergrond, en de letters worden groter.
+function openCrop(file) {
+  return new Promise(resolve => {
+    let done = false;
+    const finish = v => { if (!done) { done = true; resolve(v); } };
+    const el = document.createElement('div');
+    el.className = 'layer cropper';
+    el.innerHTML = `<div class="crop-top"><button class="icon-btn" data-close aria-label="Terug">${ic('left')}</button>
+        <p>Sleep de hoeken om alleen de tabel</p></div>
+      <div class="crop-stage"><div class="crop-wrap"><img alt="Je foto"><div class="crop-box">
+        <i data-h="nw"></i><i data-h="ne"></i><i data-h="sw"></i><i data-h="se"></i></div></div></div>
+      <div class="crop-bottom"><button class="btn ghost" id="whole" type="button">Hele foto</button>
+        <button class="btn" id="use" type="button">Lees de tabel</button></div>`;
+    const img = $('img', el), box = $('.crop-box', el);
+    let r = { x: 0.1, y: 0.25, w: 0.8, h: 0.5 }; // fracties van de foto
+    const draw = () => Object.assign(box.style, { left: `${r.x * 100}%`, top: `${r.y * 100}%`, width: `${r.w * 100}%`, height: `${r.h * 100}%` });
+    draw();
+    let drag = null;
+    box.addEventListener('pointerdown', e => {
+      e.preventDefault();
+      box.setPointerCapture(e.pointerId);
+      drag = { h: e.target.dataset.h || 'move', x: e.clientX, y: e.clientY, r: { ...r } };
+    });
+    box.addEventListener('pointermove', e => {
+      if (!drag) return;
+      const rect = img.getBoundingClientRect();
+      const dx = (e.clientX - drag.x) / rect.width, dy = (e.clientY - drag.y) / rect.height;
+      const o = drag.r, min = 0.08;
+      let { x, y, w, h } = o;
+      if (drag.h === 'move') {
+        x = Math.min(1 - w, Math.max(0, o.x + dx));
+        y = Math.min(1 - h, Math.max(0, o.y + dy));
+      } else {
+        if (drag.h.includes('w')) { x = Math.min(o.x + o.w - min, Math.max(0, o.x + dx)); w = o.x + o.w - x; }
+        if (drag.h.includes('e')) w = Math.min(1 - o.x, Math.max(min, o.w + dx));
+        if (drag.h.includes('n')) { y = Math.min(o.y + o.h - min, Math.max(0, o.y + dy)); h = o.y + o.h - y; }
+        if (drag.h.includes('s')) h = Math.min(1 - o.y, Math.max(min, o.h + dy));
+      }
+      r = { x, y, w, h };
+      draw();
+    });
+    box.addEventListener('pointerup', () => { drag = null; });
+    el.addEventListener('click', e => { if (e.target.closest('[data-close]')) closeLayers(); });
+    $('#whole', el).addEventListener('click', () => { finish(null); closeLayers(); });
+    $('#use', el).addEventListener('click', () => { finish({ ...r }); closeLayers(); });
+    img.src = URL.createObjectURL(file);
+    openLayer(el, () => finish(undefined));
+  });
+}
+
 // ---------- Eigen product en etiket scannen ----------
 function openFoodForm({ food, meal, entry, code, scan, note, back = 1 } = {}) {
   const f = food ? structuredClone(food) : { id: 'c:' + uid(), name: '', brand: '', code: code || '', unit: 'g', n: {}, servings: [], source: 'custom' };
   const known = !!S.foods[f.id];
-  const val = k => (f.n[k] === undefined || f.n[k] === null ? '' : fmtIn(f.n[k]));
+  // Intern staat alles per 100 g/ml (of per 100 stuks). Tonen per de hoeveelheid die ze zelf koos.
+  const ref0 = f.ref || baseQty(f.unit);
+  const val = k => (f.n[k] === undefined || f.n[k] === null ? '' : fmtIn(f.n[k] * ref0 / 100));
   const s0 = (f.servings || [])[0];
   const el = screen(food && known ? 'Product bewerken' : 'Nieuw product', `
     ${note ? `<div class="notice warn">${esc(note)}</div>` : ''}
     <div class="form-card">
       <h3>Etiket scannen</h3>
-      <p class="muted" style="font-size:14px;margin-top:4px">Fotografeer alleen de voedingswaardetabel, recht van voren en met goed licht. Controleer daarna de waarden: tekstherkenning maakt soms fouten.</p>
+      <p class="muted" style="font-size:14px;margin-top:4px">Fotografeer de voedingswaardetabel recht van voren, met goed licht en zonder schittering. Daarna zet je een kader om de tabel.</p>
       <div class="row">
         <button class="btn ghost" id="photo" type="button">${ic('camera')} Foto maken</button>
         <button class="btn ghost" id="gallery" type="button">${ic('image')} Galerij</button>
@@ -805,26 +898,34 @@ function openFoodForm({ food, meal, entry, code, scan, note, back = 1 } = {}) {
       <input type="file" accept="image/*" capture="environment" id="fcam" hidden>
       <input type="file" accept="image/*" id="fgal" hidden>
       <div id="ocr"></div>
+      <div style="text-align:center;margin-top:12px"><button class="link" id="pastebtn" type="button">Of plak tekst uit Google Lens</button></div>
+      <div id="pastebox" hidden>
+        <p class="muted" style="font-size:13px;margin-top:10px">Richt Google Lens of je camera-app op de tabel, kies "Tekst", selecteer alles en kopieer. Plak het hier.</p>
+        <textarea id="pastetxt" class="paste" rows="6" placeholder="Energie 1569 kJ / 375 kcal&#10;Vetten 12,5 g&#10;…"></textarea>
+        <button class="btn ghost" id="pasteok" type="button">Waarden invullen</button>
+      </div>
     </div>
     <div class="form-card">
       <h3>Product</h3>
       <label class="field">Naam<input id="name" value="${esc(f.name)}" placeholder="bijv. Griekse yoghurt" autocomplete="off"></label>
       <label class="field">Merk (optioneel)<input id="brand" value="${esc(f.brand || '')}" autocomplete="off"></label>
-      <div class="grid2">
-        <label class="field">Barcode (optioneel)<input id="code" value="${esc(f.code || '')}" inputmode="numeric" autocomplete="off"></label>
-        <label class="field">Eenheid<select id="unit"><option value="g">gram</option><option value="ml">milliliter</option></select></label>
-      </div>
+      <label class="field">Barcode (optioneel)<input id="code" value="${esc(f.code || '')}" inputmode="numeric" autocomplete="off"></label>
     </div>
     <div class="form-card">
-      <h3>Voedingswaarden per 100 <span class="uu">${f.unit}</span></h3>
+      <h3>Voedingswaarden per</h3>
+      <div class="grid2">
+        <label class="field">Hoeveelheid<input id="ref" type="text" inputmode="decimal" value="${fmtIn(ref0)}" autocomplete="off"></label>
+        <label class="field">Eenheid<select id="unit"><option value="g">gram</option><option value="ml">milliliter</option><option value="stuk">stuk</option></select></label>
+      </div>
+      <p class="muted" style="font-size:13px;margin-top:8px">Staat er op de verpakking bijvoorbeeld "per 30 g" of "per 2 stuks"? Vul dat hier in, dan reken ik de rest uit.</p>
       <div class="grid2">${NUTS.map(x => `<label class="field${x.sub ? ' sub' : ''}">${x.label}
         <div class="unit"><input id="n-${x.k}" type="text" inputmode="decimal" value="${val(x.k)}" autocomplete="off"><em>${x.k === 'kcal' ? 'kcal' : 'g'}</em></div></label>`).join('')}</div>
       <p class="muted" style="font-size:13px;margin-top:10px">Laat je calorieën leeg, dan reken ik ze uit met koolhydraten, eiwit en vet.</p>
     </div>
-    <div class="form-card">
-      <h3>Portie (optioneel)</h3>
+    <div class="form-card" id="portcard" ${f.unit === 'stuk' ? 'hidden' : ''}>
+      <h3>Portie of stuk (optioneel)</h3>
       <div class="grid2">
-        <label class="field">Omschrijving<input id="sl" value="${esc(s0?.label || '')}" placeholder="bijv. plak" autocomplete="off"></label>
+        <label class="field">Omschrijving<input id="sl" value="${esc(s0?.label || '')}" placeholder="bijv. stuk of plak" autocomplete="off"></label>
         <label class="field">Gewicht<div class="unit"><input id="sg" type="text" inputmode="decimal" value="${s0 ? fmtIn(s0.g) : ''}" autocomplete="off"><em class="uu">${f.unit}</em></div></label>
       </div>
     </div>
@@ -833,33 +934,59 @@ function openFoodForm({ food, meal, entry, code, scan, note, back = 1 } = {}) {
 
   const unitSel = $('#unit', el);
   unitSel.value = f.unit;
-  unitSel.addEventListener('change', () => el.querySelectorAll('.uu').forEach(x => { x.textContent = unitSel.value; }));
+  const refIn = $('#ref', el);
+  let lastUnit = f.unit;
+  unitSel.addEventListener('change', () => {
+    el.querySelectorAll('.uu').forEach(x => { x.textContent = unitSel.value; });
+    $('#portcard', el).hidden = unitSel.value === 'stuk';
+    // Van gram naar stuk: 100 wordt 1, en andersom.
+    if (unitSel.value === 'stuk' && num(refIn.value) === 100) refIn.value = '1';
+    if (lastUnit === 'stuk' && unitSel.value !== 'stuk' && num(refIn.value) === 1) refIn.value = '100';
+    lastUnit = unitSel.value;
+  });
   $('#photo', el).addEventListener('click', () => $('#fcam', el).click());
   $('#gallery', el).addEventListener('click', () => $('#fgal', el).click());
 
+  // Etiket en Google Lens leveren waarden per 100 g.
+  const fillValues = values => {
+    const keys = Object.keys(values);
+    if (keys.length) {
+      refIn.value = '100';
+      if (unitSel.value === 'stuk') { unitSel.value = 'g'; unitSel.dispatchEvent(new Event('change')); }
+    }
+    for (const k of keys) $(`#n-${k}`, el).value = fmtIn(values[k]);
+    return keys.length;
+  };
   const runOcr = async file => {
     if (!file) return;
+    const crop = await openCrop(file);
+    if (crop === undefined) return; // teruggegaan
     const box = $('#ocr', el);
     const url = URL.createObjectURL(file);
-    box.innerHTML = `<img class="photo-prev" src="${url}" alt="Je foto"><p class="muted" id="ost" style="font-size:14px;margin-top:10px">Bezig…</p><div class="progress"><i id="obar"></i></div>`;
+    box.innerHTML = `<p class="muted" id="ost" style="font-size:14px;margin-top:10px">Bezig…</p><div class="progress"><i id="obar"></i></div>`;
     try {
       const { text, values } = await Scan.label(file, (p, status) => {
         if (status) $('#ost', el).textContent = status + '…';
         $('#obar', el).style.width = p === null ? '8%' : `${Math.round(p * 100)}%`;
-      });
-      const keys = Object.keys(values);
-      for (const k of keys) $(`#n-${k}`, el).value = fmtIn(values[k]);
+      }, crop);
+      const n = fillValues(values);
       box.innerHTML = `<img class="photo-prev" src="${url}" alt="Je foto">
-        <div class="notice${keys.length ? '' : ' warn'}">${keys.length
-          ? `${keys.length} waarden ingevuld. Vergelijk ze even met de foto.`
-          : 'Ik kon geen waarden uit de foto halen. Probeer een scherpere foto van dichterbij, of vul ze zelf in.'}</div>
+        <div class="notice${n >= 4 ? '' : ' warn'}">${n >= 4
+          ? `${n} waarden ingevuld. Vergelijk ze even met de foto.`
+          : n ? `Maar ${n} waarden gevonden. Kijk wat er ontbreekt, of probeer Google Lens hieronder.`
+          : 'Ik kon geen waarden uit de foto halen. Probeer een scherpere foto van dichterbij, of plak de tekst uit Google Lens.'}</div>
         <details class="nutr"><summary>Herkende tekst</summary><pre style="white-space:pre-wrap;font-size:12px">${esc(text)}</pre></details>`;
     } catch (err) {
       box.innerHTML = `<div class="notice warn">Scannen mislukt: ${esc(err.message || err)}</div>`;
     }
   };
-  $('#fcam', el).addEventListener('change', e => runOcr(e.target.files[0]));
-  $('#fgal', el).addEventListener('change', e => runOcr(e.target.files[0]));
+  $('#fcam', el).addEventListener('change', e => { runOcr(e.target.files[0]); e.target.value = ''; });
+  $('#fgal', el).addEventListener('change', e => { runOcr(e.target.files[0]); e.target.value = ''; });
+  $('#pastebtn', el).addEventListener('click', () => { $('#pastebox', el).hidden = false; $('#pastetxt', el).focus(); });
+  $('#pasteok', el).addEventListener('click', () => {
+    const n = fillValues(Scan.parseLabel($('#pastetxt', el).value));
+    toast(n ? `${n} waarden ingevuld` : 'Geen voedingswaarden gevonden in de tekst');
+  });
 
   $('#save', el).addEventListener('click', () => {
     const name = $('#name', el).value.trim();
@@ -870,14 +997,20 @@ function openFoodForm({ food, meal, entry, code, scan, note, back = 1 } = {}) {
       if ([n.carbs, n.protein, n.fat].every(v => v === undefined)) return toast('Vul in elk geval de calorieën in');
       n.kcal = Math.round(4 * (n.carbs || 0) + 4 * (n.protein || 0) + 9 * (n.fat || 0) + 2 * (n.fiber || 0));
     }
-    const sl = $('#sl', el).value.trim(), sg = num($('#sg', el).value);
-    const rest = (f.servings || []).slice(1);
+    const ref = num(refIn.value);
+    if (!(ref > 0)) return toast('Vul in voor welke hoeveelheid de waarden gelden');
+    for (const k of NKEYS) if (n[k] !== undefined) n[k] = n[k] * 100 / ref;
+    const perPiece = unitSel.value === 'stuk';
+    const sl = $('#sl', el).value.trim(), sg = perPiece ? 0 : num($('#sg', el).value);
+    let servings = perPiece ? [] : [...(sg > 0 ? [{ label: sl || 'portie', g: sg }] : []), ...(f.servings || []).slice(1)];
+    // Waarden "per 30 g" ingevuld? Dan is 30 g vast ook een handige portie.
+    if (!perPiece && ref !== 100 && !servings.some(x => x.g === ref)) servings.push({ label: 'portie', g: ref });
     const saved = {
-      ...f, name, n,
+      ...f, name, n, ref,
       brand: $('#brand', el).value.trim(),
       code: $('#code', el).value.trim(),
       unit: unitSel.value,
-      servings: sg > 0 ? [{ label: sl || 'portie', g: sg }, ...rest] : rest,
+      servings,
       used: Date.now(),
     };
     S.foods[saved.id] = saved;
@@ -901,9 +1034,14 @@ function openScanner(meal) {
   el.innerHTML = `<video muted playsinline></video><div class="scan-frame"></div><div class="scan-msg" hidden></div>
     <div class="scan-top">
       <button class="icon-btn" data-close aria-label="Sluiten">${ic('close')}</button>
-      <button class="icon-btn" id="torch" hidden aria-label="Lamp aan of uit">${ic('flash')}</button>
+      <span class="scan-tools">
+        <button class="icon-btn" id="swcam" hidden aria-label="Andere camera">${ic('swap')}</button>
+        <button class="icon-btn" id="torch" hidden aria-label="Lamp aan of uit">${ic('flash')}</button>
+      </span>
     </div>
-    <div class="scan-bottom"><p>Houd de barcode in het kader</p>
+    <div class="scan-bottom">
+      <div class="zooms" id="zooms"></div>
+      <p>Houd de barcode op 15 tot 20 cm in het kader.<br>Wazig? Tik op het beeld om scherp te stellen.</p>
       <form id="mf"><input id="mc" inputmode="numeric" placeholder="Of typ de barcode" autocomplete="off"><button>Zoek</button></form></div>`;
   let ctl = null, done = false;
   const msg = html => {
@@ -935,11 +1073,33 @@ function openScanner(meal) {
   Scan.barcode($('video', el), onCode).then(c => {
     ctl = c;
     if (done) { c.stop(); return; }
-    if (c.hasTorch) {
-      const t = $('#torch', el);
-      let on = false;
-      t.hidden = false;
-      t.addEventListener('click', () => { on = !on; t.classList.toggle('on', on); c.torch(on).catch(() => { }); });
+    const t = $('#torch', el);
+    let on = false;
+    t.addEventListener('click', () => { on = !on; t.classList.toggle('on', on); c.torch(on).catch(() => { }); });
+    const zooms = $('#zooms', el);
+    const showTools = () => {
+      t.hidden = !c.hasTorch;
+      const steps = c.zoomSteps;
+      zooms.innerHTML = steps.length > 1 ? steps.map(z => `<button type="button" data-z="${z}" class="${Math.round(c.zoom) === z ? 'on' : ''}">${z}×</button>`).join('') : '';
+    };
+    showTools();
+    zooms.addEventListener('click', e => {
+      const b = e.target.closest('[data-z]');
+      if (!b) return;
+      c.setZoom(+b.dataset.z);
+      zooms.querySelectorAll('button').forEach(x => x.classList.toggle('on', x === b));
+    });
+    // Tik op het beeld: opnieuw scherpstellen.
+    $('video', el).addEventListener('click', () => { c.focus(); navigator.vibrate?.(15); });
+    if (c.cameraCount > 1) {
+      const sw = $('#swcam', el);
+      sw.hidden = false;
+      sw.addEventListener('click', async () => {
+        const n = await c.switchCamera();
+        on = false; t.classList.remove('on');
+        showTools();
+        if (n) toast(`Camera ${n} van ${c.cameraCount}`);
+      });
     }
   }).catch(err => {
     if (done) return;
