@@ -360,3 +360,38 @@ details.nutr summary { cursor: pointer; font-weight: 800; color: var(--muted); p
 .crop-bottom { display: flex; gap: 10px; padding: 10px 16px calc(18px + env(safe-area-inset-bottom)); }
 .crop-bottom .btn { margin-top: 0; }
 .crop-bottom .btn.ghost { background: rgba(255, 255, 255, .15); color: #fff; }
+
+/* Bakje Geluk weekmenu */
+.eat {
+  height: 36px; padding: 0 12px; border-radius: 18px; flex: none;
+  display: inline-flex; align-items: center; gap: 6px;
+  background: var(--primary-soft); color: var(--primary); font-weight: 800; font-size: 13px;
+}
+.eat svg { width: 16px; height: 16px; }
+.eat.on { background: var(--primary); color: var(--on-primary); }
+.weeknav { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
+.weeknav b { flex: 1; text-align: center; font-weight: 800; }
+.day-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; margin-bottom: 4px; }
+.day-head h3 { font-size: 17px; font-weight: 800; }
+.day-head h3::first-letter { text-transform: uppercase; }
+.slot { display: flex; align-items: center; gap: 10px; padding: 10px 0; border-top: 1px solid var(--line); cursor: pointer; }
+.slot .si { width: 28px; text-align: center; font-size: 20px; flex: none; }
+.slot .t { flex: 1; min-width: 0; }
+.slot .t small { display: block; font-size: 12px; }
+.slot .t b { display: block; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.slot .t b.leeg { color: var(--muted); }
+.slot .k { font-weight: 800; font-size: 14px; white-space: nowrap; color: var(--muted); }
+.slot .k svg { width: 18px; height: 18px; }
+.over-txt { color: var(--danger) !important; }
+.seg.two { grid-template-columns: 1fr 1fr; }
+.pick-info { font-size: 14px; margin: 4px 4px 0; }
+.dish-title { font-size: 20px; font-weight: 800; margin-bottom: 2px; }
+.ingl { list-style: none; margin: 0; padding: 0; font-size: 15px; }
+.ingl li { padding: 7px 0; border-top: 1px solid var(--line); }
+.ingl li:first-child { border-top: 0; }
+.steps { margin: 0; padding-left: 22px; font-size: 15px; }
+.steps li { margin-top: 8px; }
+.tick { width: 26px; height: 26px; border-radius: 8px; border: 2px solid var(--line); display: grid; place-items: center; flex: none; color: transparent; }
+.tick svg { width: 16px; height: 16px; }
+.item.done .tick { background: var(--primary); border-color: var(--primary); color: var(--on-primary); }
+.item.done b { text-decoration: line-through; color: var(--muted); }

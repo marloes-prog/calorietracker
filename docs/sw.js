@@ -1,7 +1,7 @@
 'use strict';
 // Verhoog VERSION bij elke release, dan haalt de telefoon de nieuwe bestanden op.
-const VERSION = 'ct-2026-09-28-7';
-const SHELL = ['./', 'index.html', 'app.css', 'app.js', 'scan.js', 'manifest.webmanifest', 'icons/icon.svg', 'icons/icon-192.png', 'icons/icon-512.png'];
+const VERSION = 'ct-2026-09-28-8';
+const SHELL = ['./', 'index.html', 'app.css', 'app.js', 'scan.js', 'weekmenu.js', 'manifest.webmanifest', 'icons/icon.svg', 'icons/icon-192.png', 'icons/icon-512.png'];
 const CDN = ['cdn.jsdelivr.net', 'fonts.googleapis.com', 'fonts.gstatic.com', 'images.openfoodfacts.org'];
 
 self.addEventListener('install', e => {

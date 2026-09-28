@@ -2,7 +2,7 @@
 
 // ---------- Basis ----------
 const KEY = 'calorietracker.v1';
-const APP_VERSION = '2026-09-28-7'; // gelijk houden met VERSION in sw.js
+const APP_VERSION = '2026-09-28-8'; // gelijk houden met VERSION in sw.js
 const OFF = 'https://world.openfoodfacts.org';
 const OFF_FIELDS = 'code,product_name,product_name_nl,brands,nutriments,serving_size,serving_quantity,image_front_small_url,quantity,product_quantity_unit';
 
@@ -31,6 +31,8 @@ const ICON = {
   bowl: '<path d="M3 11h18a9 9 0 0 1-18 0z"/><path d="M8 7c0-1.5 1-2 1-3.5M12 7c0-1.5 1-2 1-3.5M16 7c0-1.5 1-2 1-3.5"/>',
   check: '<path d="M5 12l5 5 9-10"/>',
   swap: '<path d="M4 8h13l-3-3M20 16H7l3 3"/>',
+  calendar: '<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/>',
+  cart: '<path d="M3 4h2l2.5 11h11L21 8H7"/><circle cx="9" cy="19.5" r="1.5"/><circle cx="17" cy="19.5" r="1.5"/>',
 };
 const ic = name => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICON[name]}</svg>`;
 
@@ -145,6 +147,7 @@ const thumb = f => f.img
   ? `<img class="thumb" src="${esc(f.img)}" alt="" loading="lazy" referrerpolicy="no-referrer">`
   : '<div class="thumb">🍽️</div>';
 function amountLabel(e) {
+  if (e.menu) return 'Bakje Geluk weekmenu';
   if (e.recipe) {
     const { eaten, portions } = e.recipe;
     return `${fmtN(eaten)} ${eaten === 1 ? 'portie' : 'porties'}${portions !== 1 ? ` van ${fmtN(portions)}` : ''}`;
@@ -182,6 +185,7 @@ function render() {
       <button class="title" data-act="today">${esc(dayLabel(cur))}
         <small>${esc(toDate(cur).toLocaleDateString('nl-NL', { day: 'numeric', month: 'long', year: cur.slice(0, 4) === today.slice(0, 4) ? undefined : 'numeric' }))}</small></button>
       <button class="icon-btn" data-act="next" aria-label="Volgende dag">${ic('right')}</button>
+      <button class="icon-btn" data-act="menu" aria-label="Weekmenu">${ic('calendar')}</button>
       <button class="icon-btn" data-act="profile" aria-label="Profiel en doelen">${ic('user')}</button>
     </header>
     ${S.profile ? '' : `<div class="banner"><div class="t"><b>Stel je dagdoel in</b><br><small>Nu reken ik met een standaarddoel. Met je lengte, gewicht en doel wordt het persoonlijk.</small></div><button class="add-btn" data-act="profile" aria-label="Doel instellen">${ic('right')}</button></div>`}
@@ -208,6 +212,7 @@ function render() {
           <small class="num"><b>${pct(m.k)}%</b> · doel ${g.pct[m.k]}%</small></div>`).join('')}</div>
       </div>
     </section>
+    ${menuTodayHtml(cur)}
     ${MEALS.map(m => {
       const es = day.filter(e => e.meal === m.id);
       const mt = total(es);
@@ -227,12 +232,15 @@ function render() {
 }
 
 $('#app').addEventListener('click', e => {
-  const a = e.target.closest('[data-act],[data-add],[data-entry]');
+  const a = e.target.closest('[data-act],[data-add],[data-entry],[data-eat],[data-md]');
   if (!a) return;
   if (a.dataset.add) return openAdd(a.dataset.add);
+  if (a.dataset.eat) { toggleEaten(cur, a.dataset.eat); return render(); }
+  if (a.dataset.md) return openDish({ day: cur, slot: a.dataset.md });
   if (a.dataset.entry) {
     const entry = (S.diary[cur] || []).find(x => x.id === a.dataset.entry);
-    if (entry?.recipe) openRecipe({ entry });
+    if (entry?.menu) openDish({ day: cur, slot: entry.menu.slot, dishId: entry.menu.dishId });
+    else if (entry?.recipe) openRecipe({ entry });
     else if (entry) openPortion({ entry });
     return;
   }
@@ -241,6 +249,7 @@ $('#app').addEventListener('click', e => {
   if (act === 'next') { cur = shiftDay(cur, 1); render(); }
   if (act === 'today') { cur = today; render(); }
   if (act === 'profile') openProfile();
+  if (act === 'menu') openWeekMenu();
 });
 
 // Na middernacht springt "Vandaag" mee als je de app weer opent.
@@ -1201,7 +1210,9 @@ function openProfile() {
       <div class="row"><button class="btn ghost" id="exp" type="button">Downloaden</button><button class="btn ghost" id="imp" type="button">Terugzetten</button></div>
       <input type="file" id="impf" accept="application/json,.json" hidden>
     </div>
+    ${menuImportHtml()}
     <p class="hint">Versie ${APP_VERSION}</p>`);
+  wireMenuImport(el);
 
   const read = () => {
     for (const k of ['age', 'height', 'weight']) p[k] = num($('#' + k, el).value);

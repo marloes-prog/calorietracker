@@ -13,7 +13,8 @@ Persoonlijke calorietracker van Marloes, als PWA op haar Android-telefoon. Allee
 
 ## Afspraken
 
-- Bewust geen extra's: geen water, stappen of beweging. Alleen eten toevoegen.
+- Bewust geen extra's: geen water, stappen of beweging. Alleen eten toevoegen. Garmin-koppeling en een
+  regel "Beweging vandaag" zijn op 2026-09-28 besproken en afgewezen; beweging zit alleen in de activiteitsfactor.
 - Design naar Yazio: lichte kaarten, grote kcal-ring, macrobalkjes, Nunito.
 - Etiket scannen gebeurt met gratis OCR (Tesseract.js via jsDelivr), niet met een betaalde API.
 - Dagdoel wordt berekend (Mifflin-St Jeor x activiteit + doel), met eigen doel als overschrijving.
@@ -35,6 +36,22 @@ Persoonlijke calorietracker van Marloes, als PWA op haar Android-telefoon. Allee
   onderaan in Profiel (`APP_VERSION` in app.js, gelijk houden met `VERSION` in sw.js).
 - Het veld "Per" in het productformulier zegt waarvoor de waarden gelden, niet hoeveel ze eet. Marloes las
   het eerst als hoeveelheid; de zin eronder ("70 kcal per 1 stuk. Hoeveel je eet, kies je daarna.") is daarvoor.
+
+## Bakje Geluk weekmenu's (gebouwd 2026-09-28)
+
+- Scherm "Weekmenu" (kalenderknop bovenin), geen aparte app: plannen, koken, loggen en boodschappen.
+  Code in `docs/weekmenu.js` (vóór app.js geladen), haakjes in app.js: topbar, `menuTodayHtml` in `render()`,
+  klikken op `data-eat`/`data-md`, dagboekregels met `e.menu`, en de inleeskaart in Profiel.
+- Opslag: gerechten in `localStorage['calorietracker.bakjegeluk']` (buiten `S`, dus niet in de back-up);
+  planning in `S.plan[dag][slot]`, afgevinkte boodschappen in `S.shop[maandag]`. Zes slots, waarvan beide
+  tussendoortjes en het Bakje Geluk in het dagboek onder Tussendoortjes vallen.
+- Het bestand maak je met `tools/maak_trackerbestand.py` in `../Bakje Geluk weekmenu's/`. Gerecht-id's zijn
+  een hash van lijst en naam, zodat een planning blijft kloppen na opnieuw inlezen.
+- De recepten zijn betaalde content en de repo is publiek. Ze komen dus **nooit** in de repo: de app leest
+  eenmalig een bestand in (gemaakt in `../Bakje Geluk weekmenu's/`) en bewaart het alleen op de telefoon.
+- Een gegeten gerecht wordt één dagboekregel met de kcal uit het weekmenu, zonder macro's.
+- Boodschappen: diner x3 (2 volwassenen + 2 kinderen, kinderen tellen samen als 1). Overige eetmomenten x1.
+- Elio blijft los van de weekmenu's.
 
 ## Bij een wijziging
 
