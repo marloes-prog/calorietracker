@@ -43,7 +43,7 @@ Persoonlijke calorietracker van Marloes, als PWA op haar Android-telefoon. Allee
   Code in `docs/weekmenu.js` (vóór app.js geladen), haakjes in app.js: topbar, `menuTodayHtml` in `render()`,
   klikken op `data-eat`/`data-md`, dagboekregels met `e.menu`, en de inleeskaart in Profiel.
 - Opslag: gerechten in `localStorage['calorietracker.bakjegeluk']` (buiten `S`, dus niet in de back-up);
-  planning in `S.plan[dag][slot]`, afgevinkte boodschappen in `S.shop[maandag]`. Zes slots, waarvan beide
+  planning in `S.plan[dag][slot]`, afgevinkte boodschappen in `S.shop[zaterdag]` (week loopt za t/m vr, AH bezorgt vrijdagavond). Zes slots, waarvan beide
   tussendoortjes en het Bakje Geluk in het dagboek onder Tussendoortjes vallen.
 - Het bestand maak je met `tools/maak_trackerbestand.py` in `../Bakje Geluk weekmenu's/`. Gerecht-id's zijn
   een hash van lijst en naam, zodat een planning blijft kloppen na opnieuw inlezen.

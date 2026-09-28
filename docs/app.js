@@ -2,7 +2,7 @@
 
 // ---------- Basis ----------
 const KEY = 'calorietracker.v1';
-const APP_VERSION = '2026-09-28-9'; // gelijk houden met VERSION in sw.js
+const APP_VERSION = '2026-09-28-10'; // gelijk houden met VERSION in sw.js
 const OFF = 'https://world.openfoodfacts.org';
 const OFF_FIELDS = 'code,product_name,product_name_nl,brands,nutriments,serving_size,serving_quantity,image_front_small_url,quantity,product_quantity_unit';
 

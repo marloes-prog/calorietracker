@@ -29,7 +29,9 @@ function bg() {
 const plan = () => (S.plan ||= {});
 const dishAt = (day, slot) => bg().byId[plan()[day]?.[slot]];
 const eatenEntry = (day, slot) => (S.diary[day] || []).find(e => e.menu?.slot === slot);
-const weekStart = k => shiftDay(k, -((toDate(k).getDay() + 6) % 7));
+// De week loopt van zaterdag t/m vrijdag: AH bezorgt de boodschappen op vrijdagavond.
+const weekStart = k => shiftDay(k, -((toDate(k).getDay() + 1) % 7));
+const weekLabel = wk => [wk, shiftDay(wk, 6)].map(k => toDate(k).toLocaleDateString('nl-NL', { weekday: 'short', day: 'numeric', month: 'short' })).join(' t/m ');
 const plannedKcal = (day, except) => SLOTS.reduce((s, sl) => s + (sl.id !== except && dishAt(day, sl.id)?.kcal || 0), 0);
 const dayTitle = k => toDate(k).toLocaleDateString('nl-NL', { weekday: 'long', day: 'numeric', month: 'short' });
 
@@ -192,7 +194,7 @@ function openWeekMenu() {
     const days = [...Array(7)].map((_, i) => shiftDay(wk, i));
     box.innerHTML = `
       <div class="weeknav"><button class="icon-btn" data-w="-7" aria-label="Vorige week">${ic('left')}</button>
-        <b>Week van ${esc(toDate(wk).toLocaleDateString('nl-NL', { day: 'numeric', month: 'long' }))}</b>
+        <b>${esc(weekLabel(wk))}</b>
         <button class="icon-btn" data-w="7" aria-label="Volgende week">${ic('right')}</button></div>
       <button class="btn ghost" id="shop" type="button">${ic('cart')} Boodschappenlijst</button>
       ${days.map(day => {
@@ -257,7 +259,7 @@ function shoppingList(wk) {
 }
 function openShopping(wk) {
   const done = ((S.shop ||= {})[wk] ||= {});
-  const el = screen('Boodschappen', `<p class="muted pick-info">Week van ${esc(toDate(wk).toLocaleDateString('nl-NL', { day: 'numeric', month: 'long' }))}.
+  const el = screen('Boodschappen', `<p class="muted pick-info">${esc(weekLabel(wk))}.
     Diner voor ${DINER_PERSONEN} personen, de rest voor 1.</p><div id="sl"></div>`);
   const amount = it => (it.qty === null ? '' : it.unit ? `${fmtN(it.qty)} ${it.unit}` : `${fmtN(it.qty)}×`);
   const row = it => `<div class="item${done[it.key] ? ' done' : ''}" data-k="${esc(it.key)}"><span class="tick">${ic('check')}</span>
