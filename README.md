@@ -20,4 +20,9 @@ offline gebruik, donkere modus. Sinds 2026-09-28 ook: "Vaak bij [maaltijd]", "Va
 per zelfgekozen hoeveelheid, eigen eenheden, etiketfoto uitsnijden, tekst plakken uit Google Lens en een
 betere barcodescanner (hoofdcamera, zoom, tikken om scherp te stellen).
 
-Open: barcodescanner en etiketscan moeten nog op Marloes' eigen telefoon getest worden.
+Ook sinds 2026-09-28: Bakje Geluk weekmenu's (kalenderknop). Week plannen, recept bekijken, met één tik
+in het dagboek, en een boodschappenlijst (diner x3). De recepten lees je één keer in via Profiel uit
+`Bakje Geluk voor calorietracker.json` in de Dropbox-map `Bakje Geluk weekmenu's`.
+
+Open: barcodescanner, etiketscan en het inlezen van de weekmenu's moeten nog op Marloes' eigen telefoon
+getest worden.
