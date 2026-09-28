@@ -155,7 +155,7 @@ function menuImportHtml() {
     <p class="muted" style="font-size:14px;margin-top:4px">${n ? `${n} gerechten ingelezen.` : 'Nog niet ingelezen.'}
       Kies het bestand <b>Bakje Geluk voor calorietracker.json</b>. De recepten blijven alleen op deze telefoon.</p>
     <button class="btn ghost" id="bgimp" type="button">${n ? 'Opnieuw inlezen' : 'Bestand inlezen'}</button>
-    <input type="file" id="bgf" accept="application/json,.json" hidden></div>`;
+    <input type="file" id="bgf" hidden></div>`;
 }
 function wireMenuImport(el, done) {
   $('#bgimp', el).addEventListener('click', () => $('#bgf', el).click());
